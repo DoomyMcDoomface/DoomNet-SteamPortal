@@ -1,0 +1,291 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="DoomNet Setup"
+        Width="800" Height="524"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        WindowStartupLocation="CenterScreen"
+        Background="#0E0E0F"
+        UseLayoutRounding="True"
+        SnapsToDevicePixels="True"
+        TextOptions.TextFormattingMode="Display"
+        TextOptions.TextRenderingMode="ClearType"
+        FontFamily="Segoe UI">
+    <Window.Resources>
+        <SolidColorBrush x:Key="Bg" Color="#0E0E0F"/>
+        <SolidColorBrush x:Key="Elevated" Color="#17181A"/>
+        <SolidColorBrush x:Key="Panel" Color="#121214"/>
+        <SolidColorBrush x:Key="Line" Color="#2A2B2E"/>
+        <SolidColorBrush x:Key="Accent" Color="#B33232"/>
+        <SolidColorBrush x:Key="AccentHot" Color="#C44444"/>
+        <SolidColorBrush x:Key="Text" Color="#D9DADD"/>
+        <SolidColorBrush x:Key="Muted" Color="#8F98A0"/>
+        <SolidColorBrush x:Key="Field" Color="#2C2D30"/>
+        <Style x:Key="PathBox" TargetType="TextBox">
+            <Setter Property="Background" Value="{StaticResource Field}"/>
+            <Setter Property="Foreground" Value="{StaticResource Text}"/>
+            <Setter Property="CaretBrush" Value="{StaticResource Text}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource Muted}"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="3">
+                            <ScrollViewer x:Name="PART_ContentHost" Margin="12,0,12,0" VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="NextButton" TargetType="Button">
+            <Setter Property="Foreground" Value="{StaticResource Text}"/>
+            <Setter Property="Background" Value="{StaticResource Accent}"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Width" Value="104"/>
+            <Setter Property="Height" Value="32"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="3">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#C44444"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Bd" Property="Opacity" Value="0.35"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="GhostButton" TargetType="Button">
+            <Setter Property="Foreground" Value="{StaticResource Text}"/>
+            <Setter Property="Background" Value="{StaticResource Elevated}"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Height" Value="32"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                BorderBrush="#2A2B2E" BorderThickness="1" CornerRadius="3">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#222326"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="ChoiceButton" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{StaticResource Text}"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}" Padding="6,6" CornerRadius="3">
+                            <ContentPresenter/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#17181A"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="CloseButton" TargetType="Button">
+            <Setter Property="Foreground" Value="{StaticResource Accent}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="FontSize" Value="16"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Width" Value="36"/>
+            <Setter Property="Height" Value="36"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#B33232"/>
+                                <Setter Property="Foreground" Value="#D9DADD"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+    <Border BorderBrush="#2A2B2E" BorderThickness="1">
+        <DockPanel>
+            <Grid x:Name="TitleBar" DockPanel.Dock="Top" Height="36" Background="#17181A">
+                <TextBlock Text="DoomNet" Foreground="#D9DADD" FontSize="15" FontWeight="SemiBold"
+                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                <Button x:Name="CloseButton" Style="{StaticResource CloseButton}" Content="&#x00D7;"
+                        HorizontalAlignment="Right" VerticalAlignment="Center" AutomationProperties.Name="Close"/>
+                <Border Height="1" VerticalAlignment="Bottom" Background="#2A2B2E"/>
+            </Grid>
+            <Grid DockPanel.Dock="Bottom" Height="58">
+                <Border Height="1" VerticalAlignment="Top" Background="#2A2B2E"/>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,24,0">
+                    <Button x:Name="BackButton" Style="{StaticResource GhostButton}" Content="Back" Width="88" Margin="0,0,8,0"/>
+                    <Button x:Name="NextButton" Style="{StaticResource NextButton}" Content="Next"/>
+                </StackPanel>
+            </Grid>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="156"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <Border Grid.Column="0" Background="#121214">
+                    <StackPanel Margin="16,20,12,0">
+                        <StackPanel Orientation="Horizontal" Height="34">
+                            <Border x:Name="Mark0" Width="3" Background="#B33232" Margin="0,6,12,6"/>
+                            <TextBlock x:Name="Step0" Text="Welcome" VerticalAlignment="Center" FontSize="14" Foreground="#D9DADD"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Height="34">
+                            <Border x:Name="Mark1" Width="3" Background="Transparent" Margin="0,6,12,6"/>
+                            <TextBlock x:Name="Step1" Text="Choose" VerticalAlignment="Center" FontSize="14" Foreground="#8F98A0"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Height="34">
+                            <Border x:Name="Mark2" Width="3" Background="Transparent" Margin="0,6,12,6"/>
+                            <TextBlock x:Name="Step2" Text="Color" VerticalAlignment="Center" FontSize="14" Foreground="#8F98A0"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Height="34">
+                            <Border x:Name="Mark3" Width="3" Background="Transparent" Margin="0,6,12,6"/>
+                            <TextBlock x:Name="Step3" Text="Finish" VerticalAlignment="Center" FontSize="14" Foreground="#8F98A0"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+                <Border Grid.Column="1" BorderBrush="#2A2B2E" BorderThickness="1,0,0,0">
+                    <Grid Margin="28,20,28,4">
+                        <StackPanel x:Name="WelcomePage">
+                            <TextBlock Text="Set up DoomNet" Foreground="#D9DADD" FontSize="20" FontWeight="SemiBold"/>
+                            <TextBlock Text="Paste the folder that contains steam.exe, or browse if it is not in the usual place."
+                                       Foreground="#8F98A0" FontSize="14" TextWrapping="Wrap" Margin="0,10,0,0" LineHeight="22"/>
+                            <TextBlock Text="Steam folder" Foreground="#D9DADD" FontSize="14" Margin="0,18,0,0"/>
+                            <Grid Margin="0,10,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="12"/>
+                                    <ColumnDefinition Width="104"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBox x:Name="SteamPath" Style="{StaticResource PathBox}" Height="34"/>
+                                <Button x:Name="BrowseButton" Grid.Column="2" Style="{StaticResource GhostButton}" Content="Browse" Height="34"/>
+                            </Grid>
+                        </StackPanel>
+                        <StackPanel x:Name="ChoosePage" Visibility="Collapsed">
+                            <TextBlock Text="What should be installed?" Foreground="#D9DADD" FontSize="20" FontWeight="SemiBold"/>
+                            <TextBlock Text="Pick the player, the skin, or both. The skin does not force the player on."
+                                       Foreground="#8F98A0" FontSize="14" TextWrapping="Wrap" Margin="0,10,0,0" LineHeight="22"/>
+                            <Button x:Name="PlayerChoice" Style="{StaticResource ChoiceButton}" Margin="0,14,0,0" HorizontalAlignment="Stretch">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="36"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Border x:Name="PlayerBubble" Width="22" Height="22" CornerRadius="11" Background="White"
+                                            BorderBrush="#C4C4C4" BorderThickness="1" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,1,0,0">
+                                        <TextBlock x:Name="PlayerTick" FontFamily="Segoe MDL2 Assets" Text="&#xE73E;" FontSize="11"
+                                                   Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"/>
+                                    </Border>
+                                    <StackPanel Grid.Column="1">
+                                        <TextBlock Text="Doomy's SteamTunes" Foreground="#D9DADD" FontSize="15" FontWeight="SemiBold"/>
+                                        <TextBlock Text="Music player in the Steam client and the Shift+Tab overlay."
+                                                   Foreground="#8F98A0" FontSize="13" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                                    </StackPanel>
+                                </Grid>
+                            </Button>
+                            <Button x:Name="SkinChoice" Style="{StaticResource ChoiceButton}" Margin="0,2,0,0" HorizontalAlignment="Stretch">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="36"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Border x:Name="SkinBubble" Width="22" Height="22" CornerRadius="11" Background="White"
+                                            BorderBrush="#C4C4C4" BorderThickness="1" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,1,0,0">
+                                        <TextBlock x:Name="SkinTick" FontFamily="Segoe MDL2 Assets" Text="&#xE73E;" FontSize="11"
+                                                   Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"/>
+                                    </Border>
+                                    <StackPanel Grid.Column="1">
+                                        <TextBlock Text="Steam-Skin" Foreground="#D9DADD" FontSize="15" FontWeight="SemiBold"/>
+                                        <TextBlock Text="Red and black theme. Optional. It does not load the player by itself."
+                                                   Foreground="#8F98A0" FontSize="13" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                                    </StackPanel>
+                                </Grid>
+                            </Button>
+                        </StackPanel>
+                        <StackPanel x:Name="ColorPage" Visibility="Collapsed">
+                            <TextBlock Text="Player color" Foreground="#D9DADD" FontSize="20" FontWeight="SemiBold"/>
+                            <TextBlock Text="Steam Blue is the default. Match Steam-Skin uses the red and black palette."
+                                       Foreground="#8F98A0" FontSize="14" TextWrapping="Wrap" Margin="0,10,0,0" LineHeight="22"/>
+                            <Button x:Name="BlueChoice" Style="{StaticResource ChoiceButton}" Margin="0,14,0,0" HorizontalAlignment="Stretch">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="36"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Border x:Name="BlueBubble" Width="22" Height="22" CornerRadius="11" Background="#B33232"
+                                            BorderBrush="#B33232" BorderThickness="1" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,1,0,0">
+                                        <TextBlock x:Name="BlueTick" FontFamily="Segoe MDL2 Assets" Text="&#xE73E;" FontSize="11"
+                                                   Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <StackPanel Grid.Column="1">
+                                        <TextBlock Text="Steam Blue" Foreground="#D9DADD" FontSize="15" FontWeight="SemiBold"/>
+                                        <TextBlock Text="Default player palette. The setup window itself stays black and red."
+                                                   Foreground="#8F98A0" FontSize="13" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                                    </StackPanel>
+                                </Grid>
+                            </Button>
+                            <Button x:Name="RedChoice" Style="{StaticResource ChoiceButton}" Margin="0,2,0,0" HorizontalAlignment="Stretch">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="36"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Border x:Name="RedBubble" Width="22" Height="22" CornerRadius="11" Background="White"
+                                            BorderBrush="#C4C4C4" BorderThickness="1" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="0,1,0,0">
+                                        <TextBlock x:Name="RedTick" FontFamily="Segoe MDL2 Assets" Text="&#xE73E;" FontSize="11"
+                                                   Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed"/>
+                                    </Border>
+                                    <StackPanel Grid.Column="1">
+                                        <TextBlock Text="Match Steam-Skin" Foreground="#D9DADD" FontSize="15" FontWeight="SemiBold"/>
+                                        <TextBlock Text="Player accent #b33232. Only asked when both pieces are selected."
+                                                   Foreground="#8F98A0" FontSize="13" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                                    </StackPanel>
+                                </Grid>
+                            </Button>
+                        </StackPanel>
+                        <StackPanel x:Name="FinishPage" Visibility="Collapsed">
+                            <TextBlock Text="Finish" Foreground="#D9DADD" FontSize="20" FontWeight="SemiBold"/>
+                            <TextBlock Text="Nothing will be installed. Close this preview when you know what to change."
+                                       Foreground="#8F98A0" FontSize="14" TextWrapping="Wrap" Margin="0,10,0,0" LineHeight="22"/>
+                            <Border Background="#17181A" BorderBrush="#2A2B2E" BorderThickness="1" CornerRadius="3" Padding="16,12" Margin="0,14,0,0">
+                                <StackPanel>
+                                    <TextBlock Text="Choices" Foreground="#D9DADD" FontSize="15" FontWeight="SemiBold"/>
+                                    <TextBlock x:Name="SummaryText" Foreground="#8F98A0" FontSize="14" TextWrapping="Wrap" Margin="0,10,0,0" LineHeight="22"/>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+            </Grid>
+        </DockPanel>
+    </Border>
+</Window>
