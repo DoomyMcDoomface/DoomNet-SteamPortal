@@ -34,7 +34,7 @@ $pluginPath = Join-Path $player "plugin.json"
 if (Need-File $pluginPath) {
     $plugin = Get-Content -LiteralPath $pluginPath -Raw | ConvertFrom-Json
     if ($plugin.name -ne "SteamMusicPlayer") { Fail "plugin.json name is '$($plugin.name)'" }
-    if ($plugin.version -ne "1.5.0") { Fail "plugin.json version is '$($plugin.version)'" }
+    if ($plugin.version -ne "1.14.1") { Fail "plugin.json version is '$($plugin.version)'" }
     if ($plugin.backendType -ne "lua") { Fail "plugin.json backendType is '$($plugin.backendType)'" }
 }
 
@@ -50,12 +50,12 @@ Need-Text $main 'require("millennium")' "lua host module"
 Need-Text $main "millennium.add_browser_js" "browser js registration"
 Need-Text $main "millennium.call_frontend_method" "frontend push"
 Need-Text $main "millennium.ready()" "ready call"
-Need-Text $bootstrap 'var ASSET_REV = "20260922-version-1.5.0"' "asset revision"
+Need-Text $bootstrap 'var ASSET_REV = "20261001-version-1.14.1"' "asset revision"
 Need-Text $bootstrap "mix-image.js" "bootstrap load order"
 Need-Text $bootstrap "window.__steamMusicPlayerBootstrap" "bootstrap guard"
 Need-Text $bootstrap "window !== window.top" "iframe bail"
 Need-Text $ui 'var PLUGIN_NAME = "SteamMusicPlayer"' "ui plugin name"
-Need-Text $ui 'var PLUGIN_VERSION = "1.5.0"' "about version"
+Need-Text $ui 'var PLUGIN_VERSION = "1.14.1"' "about version"
 Need-Text $ui "Millennium.callServerMethod(PLUGIN_NAME, method, argsArray || [])" "ui call shape"
 Need-Text $ui "__SMP_RECEIVERS__" "frontend fan-out"
 Need-Text $engine "Millennium.callServerMethod(PLUGIN_NAME, method, argsArray || [])" "engine call shape"
