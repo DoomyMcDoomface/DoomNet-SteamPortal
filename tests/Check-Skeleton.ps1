@@ -52,15 +52,7 @@ function Fail([string]$Message) {
 
 Write-Output "exe   $Exe"
 $length = (Get-Item -LiteralPath $Exe).Length
-Write-Output "size  $length bytes"
-
-if ($Exe -match "\\Release\\") {
-    if ($length -gt 512KB) {
-        Fail "Release image is $length bytes (limit 512KB). Something extra was linked."
-    }
-} elseif ($length -gt 2MB) {
-    Fail "Image is $length bytes (limit 2MB)."
-}
+Write-Output "size  $length bytes (logged only, no cap: the host embeds Lua and a JSON library)"
 
 $pe = Get-PeInfo $Exe
 Write-Output ("pe    subsystem={0} dllchars=0x{1:X4}" -f $pe.Subsystem, $pe.DllCharacteristics)

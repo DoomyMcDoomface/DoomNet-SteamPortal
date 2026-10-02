@@ -23,11 +23,11 @@ The spec in this repo is `own_steam_loader_a1dd8dbe.plan.md`. If that spec and a
 
 ## Logging
 
-Every step writes one sentence, on success and on failure. The line names the component (`startup`, `instance`, `steam`, `config`, `payload`, `launch`, `shortcut`, `installer`, `wideio`), the path or value involved, and `windows_error_text` when Windows failed. Do not log a bare number or "error 404". The last line of a run should be enough to see which step stopped. New code keeps that shape.
+Every step writes one sentence, on success and on failure. The line names the component (`startup`, `instance`, `steam`, `config`, `payload`, `launch`, `shortcut`, `installer`, `wideio`, `lua`, `browser`; later `cdp`, `relay`, `hook`, `stream`, `inject`, `toggle`), the path or value involved, and `windows_error_text` when Windows failed. Do not log a bare number or "error 404". The last line of a run should be enough to see which step stopped. New code keeps that shape.
 
 ## Order
 
-1. Windowless process, single instance (`Local\DoomNet`, no wait), log line under `Local\DoomNetLog`, Steam discovery, and `config.json` load. `DOOMNET_ROOT` is the test override for the data directory. `tests\Check-Skeleton.ps1` and `DoomNetFoundationTests` are the gate. Do not start Steam from this step.
+1. Windowless process, single instance (`Local\DoomNet`, no wait), log line under `Local\DoomNetLog`, Steam discovery, and `config.json` load. `DOOMNET_ROOT` is the test override for the data directory. `tests\Check-Skeleton.ps1` and `DoomNetFoundationTests` are the gate. The no-argument path does not create a Lua state and does not stay running. `--run` and `--watch` are the only resident paths; they may start the Lua host and they must not start `steam.exe` until `steam_attach` is in place and tested.
 2. Lua host and the four shims, proven with `get_settings` and `get_library_info` against the JSON the page already parses. No injection.
 3. Only then fill `steam_attach`.
 4. Main window, then one overlay, then skin-only / player-only / both.
