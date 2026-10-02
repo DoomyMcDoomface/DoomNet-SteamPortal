@@ -4,7 +4,11 @@
 //
 // Entry is wWinMain. Subsystem is WINDOWS, so this process has no console.
 // Local\DoomNet is taken without waiting. A second launch exits 0.
-// This process does not start Steam, retarget a shortcut, or inject.
+// With no arguments this process does not stay running, start Steam, or inject.
+// `--run` and `--watch` stay until Local\DoomNetStop or <root>\stop.flag, and
+// they start the Lua host when the player is installed. They still do not
+// start steam.exe. `--attach` is what the bootstrap starts when the user
+// opens Steam, and that path injects into the client that is already running.
 // Every step writes one sentence to logs\doomnet.log.
 
 #include "anchors.h"
@@ -13,6 +17,7 @@
 #include "instance.h"
 #include "log.h"
 #include "paths.h"
+#include "resident.h"
 #include "steam_discover.h"
 
 #include <windows.h>
@@ -53,7 +58,10 @@ void log_config_result(const std::wstring& path, doomnet::ConfigLoad loaded, con
 
 }  // namespace
 
-int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
+int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR command_line, int) {
+    doomnet::StartupMode mode = doomnet::StartupMode::Once;
+    std::wstring rejected_argument;
+    const bool known_argument = doomnet::parse_startup_mode(command_line, mode, rejected_argument);
     doomnet::log_anchor();
     doomnet::config_anchor();
     doomnet::steam_discover_anchor();
@@ -100,5 +108,14 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     log_config_result(config_path, loaded, config, config_error);
 
     doomnet::log_event(L"info", L"startup", L"Startup checks finished. Steam was not started and nothing was injected.");
+    if (!known_argument) {
+        const std::wstring detail = L"The argument '" + rejected_argument + L"' is not --run, --watch, or --attach, so this process is exiting without staying running and without starting the Lua host.";
+        doomnet::log_event(L"error", L"startup", detail.c_str());
+        return 0;
+    }
+    if (mode == doomnet::StartupMode::Once) {
+        return 0;
+    }
+    doomnet::run_resident(mode, root, steam, config);
     return 0;
 }

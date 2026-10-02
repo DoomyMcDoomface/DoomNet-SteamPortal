@@ -103,9 +103,18 @@ if (Need-File $attach) {
 
 $boot = Join-Path $repo "src\boot_script.js"
 if (Need-File $boot) {
-    $bootText = [System.IO.File]::ReadAllText($boot).Trim()
-    if (-not ($bootText.StartsWith("/*") -and $bootText.EndsWith("*/"))) {
-        Fail "boot_script.js is no longer a comment block. It must not be injectable until the binding exists."
+    $bootText = [System.IO.File]::ReadAllText($boot)
+    if ($bootText -notmatch "callServerMethod") {
+        Fail "boot_script.js does not define callServerMethod"
+    }
+    if ($bootText -notmatch "window !== window\.top") {
+        Fail "boot_script.js does not skip iframes"
+    }
+    if ($bootText -match "127\.0\.0\.1") {
+        Fail "boot_script.js mentions 127.0.0.1. The page binding is not HTTP."
+    }
+    if ($bootText -match "fetch\s*\(") {
+        Fail "boot_script.js fetches. The page binding is not HTTP."
     }
 }
 
