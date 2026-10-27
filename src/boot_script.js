@@ -74,7 +74,7 @@
 
     var pending = {};
     var nextId = 1000000;
-    var BOOTSTRAP_URL = "https://steamloopback.host/steam-music-player/bootstrap.js?v=20261001-version-1.14.1";
+    var BOOTSTRAP_URL = "https://steamloopback.host/steam-music-player/bootstrap.js?v=20261027-version-1.15.0";
 
     function rejectNow(message) {
         return Promise.reject(new Error(message));
@@ -744,6 +744,51 @@
         // for its rectangle. Only the main window's views are held, and only
         // while the SteamTunes tab is open. Steam's own SetVisible/SetBounds
         // calls are remembered so they can be replayed when the tab closes.
+        function boundsUsable(bounds) {
+            return !!(bounds && bounds.w > 8 && bounds.h > 8);
+        }
+
+        function viewBounds(browser) {
+            try {
+                var now = typeof browser.GetBounds === "function" ? browser.GetBounds() : null;
+                if (!now || typeof now.width !== "number" || typeof now.height !== "number") {
+                    return null;
+                }
+                return { x: now.x || 0, y: now.y || 0, w: now.width, h: now.height };
+            } catch (err) {
+                return null;
+            }
+        }
+
+        function rememberBounds(browser, bounds) {
+            if (!boundsUsable(bounds)) {
+                return;
+            }
+            var area = bounds.w * bounds.h;
+            // Keep the largest rectangle Steam ever gave this view. A later,
+            // smaller SetBounds while SteamTunes is open must not become the
+            // size we restore, or only part of the page takes the mouse.
+            if (!browser.__doomnetBestArea || area >= browser.__doomnetBestArea) {
+                browser.__doomnetBestArea = area;
+                browser.__doomnetWantBounds = bounds;
+            }
+        }
+
+        // The page under the nav. Restoring an older, smaller rectangle leaves
+        // a dead band where the mouse hits Steam's shell and nothing answers.
+        function steamContentBox(doc) {
+            var row = steamNavRow(doc);
+            var top = 0;
+            if (row && row.getBoundingClientRect) {
+                top = Math.max(0, Math.round(row.getBoundingClientRect().bottom));
+            }
+            var root = doc.documentElement || doc.body;
+            var w = (root && root.clientWidth) || 0;
+            var h = (root && root.clientHeight) || 0;
+            var box = { x: 0, y: top, w: w, h: h - top };
+            return boundsUsable(box) ? box : null;
+        }
+
         function holdSteamBrowser(doc, browser) {
             if (!browser || browser.__doomnetHeld) {
                 return;
@@ -755,22 +800,21 @@
             browser.__doomnetPlace = place;
             browser.__doomnetWantVisible = null;
             browser.__doomnetWantBounds = null;
-            try {
-                var now = typeof browser.GetBounds === "function" ? browser.GetBounds() : null;
-                if (now && typeof now.width === "number" && typeof now.height === "number") {
-                    browser.__doomnetWantBounds = { x: now.x || 0, y: now.y || 0, w: now.width, h: now.height };
-                }
-            } catch (err) {
-            }
+            rememberBounds(browser, viewBounds(browser));
             browser.SetVisible = function (on) {
-                browser.__doomnetWantVisible = !!on;
+                // Hiding the view while SteamTunes is open is Steam reacting
+                // to that hide. Remembering it would leave the page invisible
+                // after the tab closes, and the mouse would hit nothing.
+                if (on || !steamTunesOpen(doc)) {
+                    browser.__doomnetWantVisible = !!on;
+                }
                 if (steamTunesOpen(doc)) {
                     return show(false);
                 }
                 return show(on);
             };
             browser.SetBounds = function (x, y, w, h) {
-                browser.__doomnetWantBounds = { x: x, y: y, w: w, h: h };
+                rememberBounds(browser, { x: x, y: y, w: w, h: h });
                 if (steamTunesOpen(doc)) {
                     return undefined;
                 }
@@ -819,11 +863,14 @@
             for (i = 0; i < views.length; i++) {
                 var browser = views[i];
                 holdSteamBrowser(doc, browser);
+                rememberBounds(browser, viewBounds(browser));
+                if (!boundsUsable(viewBounds(browser)) && !browser.__doomnetCollapsed) {
+                    continue;
+                }
+                browser.__doomnetCollapsed = true;
                 try {
                     browser.__doomnetShow(false);
-                    if (browser.__doomnetWantBounds) {
-                        browser.__doomnetPlace(0, 0, 0, 0);
-                    }
+                    browser.__doomnetPlace(0, 0, 0, 0);
                 } catch (err) {
                 }
             }
@@ -835,23 +882,136 @@
             if (doc) {
                 doc.__doomnetBrowsers = null;
             }
+            var main = null;
+            var mainArea = 0;
             var i;
             for (i = 0; i < views.length; i++) {
-                var browser = views[i];
-                if (!browser || !browser.__doomnetHeld) {
+                var candidate = views[i];
+                if (!candidate || !candidate.__doomnetCollapsed) {
                     continue;
                 }
+                var area = candidate.__doomnetBestArea || 0;
+                if (area >= mainArea) {
+                    main = candidate;
+                    mainArea = area;
+                }
+            }
+            var box = steamContentBox(doc);
+            for (i = 0; i < views.length; i++) {
+                var browser = views[i];
+                if (!browser || !browser.__doomnetHeld || !browser.__doomnetCollapsed) {
+                    continue;
+                }
+                browser.__doomnetCollapsed = false;
                 try {
-                    var bounds = browser.__doomnetWantBounds;
-                    if (bounds) {
-                        browser.__doomnetPlace(bounds.x, bounds.y, bounds.w, bounds.h);
-                    }
-                    if (browser.__doomnetWantVisible !== false) {
-                        browser.__doomnetShow(true);
+                    if (browser === main) {
+                        var bounds = box || browser.__doomnetWantBounds;
+                        if (boundsUsable(bounds)) {
+                            browser.__doomnetPlace(bounds.x, bounds.y, bounds.w, bounds.h);
+                        }
+                        if (browser.__doomnetWantVisible !== false) {
+                            browser.__doomnetShow(true);
+                        }
+                    } else {
+                        // Leave the extra views collapsed. Showing every view
+                        // again stacks them, and only some clicks reach Steam.
+                        browser.__doomnetShow(false);
                     }
                 } catch (err) {
                 }
             }
+        }
+
+        function accentPaint(doc) {
+            var probe = doc.createElement("span");
+            probe.style.color = "var(--steam-accent-highlight)";
+            var color = "";
+            try {
+                doc.body.appendChild(probe);
+                color = doc.defaultView.getComputedStyle(probe).color || "";
+            } catch (err) {
+                color = "";
+            }
+            if (probe.parentNode) {
+                probe.parentNode.removeChild(probe);
+            }
+            return color;
+        }
+
+        function restoreOtherNav(doc) {
+            var tab = doc.getElementById("doomnet-steamtunes-tab");
+            var rec = tab && tab.__doomnetReleased;
+            if (!rec || !rec.el || !rec.names) {
+                if (tab) {
+                    tab.__doomnetReleased = null;
+                }
+                return;
+            }
+            var i;
+            for (i = 0; i < rec.names.length; i++) {
+                rec.el.classList.add(rec.names[i]);
+            }
+            tab.__doomnetReleased = null;
+        }
+
+        function releaseOtherNav(doc) {
+            var tab = doc.getElementById("doomnet-steamtunes-tab");
+            var row = steamNavRow(doc);
+            restoreOtherNav(doc);
+            if (!tab || !row) {
+                return;
+            }
+            var accent = accentPaint(doc);
+            if (!accent) {
+                return;
+            }
+            var kids = row.children;
+            var active = null;
+            var i;
+            var j;
+            for (i = 0; i < kids.length && !active; i++) {
+                if (kids[i] === tab) {
+                    continue;
+                }
+                var labels = kids[i].querySelectorAll("span, a, div");
+                for (j = 0; j < labels.length && j < 8; j++) {
+                    var painted = "";
+                    try {
+                        painted = doc.defaultView.getComputedStyle(labels[j]).color || "";
+                    } catch (err) {
+                        painted = "";
+                    }
+                    if (painted === accent) {
+                        active = kids[i];
+                        break;
+                    }
+                }
+            }
+            if (!active) {
+                return;
+            }
+            var names = String(active.className || "").split(/\s+/);
+            var removed = [];
+            for (i = 0; i < names.length; i++) {
+                if (!names[i]) {
+                    continue;
+                }
+                var alone = true;
+                for (j = 0; j < kids.length; j++) {
+                    if (kids[j] === active) {
+                        continue;
+                    }
+                    if (String(kids[j].className || "").split(/\s+/).indexOf(names[i]) >= 0) {
+                        alone = false;
+                        break;
+                    }
+                }
+                if (alone) {
+                    active.classList.remove(names[i]);
+                    removed.push(names[i]);
+                }
+            }
+            tab.__doomnetReleased = { el: active, names: removed };
         }
 
         function hideSteamTunes(doc, win) {
@@ -861,6 +1021,7 @@
                 host.classList.remove("doomnet-on");
             }
             resumeSteamPage(doc);
+            restoreOtherNav(doc);
             if (tab) {
                 var extras = tab.__doomnetExtras || [];
                 var i;
@@ -905,6 +1066,7 @@
                 tab.classList.add(extras[i]);
             }
             tab.__doomnetExtras = extras;
+            releaseOtherNav(doc);
             function reveal() {
                 if (typeof win.__doomnetShowPlayer === "function") {
                     win.__doomnetShowPlayer();
@@ -1065,7 +1227,8 @@
                     + "#doomnet-steamtunes-host .smp-library-pane{flex:1 1 auto !important;min-height:0 !important;overflow:auto !important;}"
                     + "#doomnet-steamtunes-tab{position:relative !important;left:auto !important;top:-4px !important;height:32px !important;min-height:32px !important;display:flex !important;align-items:center !important;align-self:center !important;box-sizing:border-box !important;margin:0 !important;z-index:auto !important;cursor:pointer;flex:0 0 auto !important;line-height:32px !important;}"
                     + "#doomnet-steamtunes-tab>*{display:flex !important;align-items:center !important;line-height:1 !important;}"
-                    + "#doomnet-steamtunes-tab.doomnet-tab-on{box-shadow:inset 0 -2px 0 var(--steam-accent-highlight,#c93a3a);}";
+                    + "html body #doomnet-steamtunes-tab.doomnet-tab-on,html body #doomnet-steamtunes-tab.doomnet-tab-on *{color:var(--steam-accent-highlight,#c93939) !important;}"
+                    + "html body #doomnet-steamtunes-tab.doomnet-tab-on::after{content:\"\";position:absolute;left:0;right:0;bottom:0;height:2px;background:var(--steam-accent-highlight,#c93939) !important;pointer-events:none;}";
                 (doc.head || doc.documentElement).appendChild(style);
             }
             var host = doc.getElementById("doomnet-steamtunes-host");

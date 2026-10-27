@@ -254,6 +254,7 @@ struct StateThread::Impl {
             note_wide(L"error", L"main.lua could not be read, so the player did not start. " + read_error);
             return false;
         }
+        source = patched_player_module("main", std::move(source));
         const std::string chunk_name = "@" + wide_to_utf8(path);
         if (luaL_loadbufferx(L, source.data(), source.size(), chunk_name.c_str(), "t") != LUA_OK) {
             const char* message = lua_tostring(L, -1);
@@ -356,8 +357,10 @@ struct StateThread::Impl {
         lua_getglobal(c.thread, message.method.c_str());
         if (!lua_isfunction(c.thread, -1)) {
             const uint64_t call_id = c.call_id;
+            const std::string missing = "The player has no Lua function named '" + message.method + "'. callServerMethod resolves a global function by name.";
             release(c);
-            resolve_error(call_id, "The player has no Lua function named '" + message.method + "'. callServerMethod resolves a global function by name.");
+            note(L"error", missing);
+            resolve_error(call_id, missing);
             return;
         }
         int pushed = 0;

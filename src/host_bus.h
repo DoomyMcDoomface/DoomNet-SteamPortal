@@ -17,6 +17,8 @@
 
 #include <condition_variable>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <deque>
 #include <mutex>
 #include <string>
@@ -159,6 +161,40 @@ public:
             state_queue_.push_back(std::move(message));
         }
         state_cv_.notify_one();
+    }
+
+    // A volume wheel posts faster than the player can apply. Fold the new
+    // delta into the bump already waiting, so the wheel does not queue a
+    // round trip per notch.
+    bool merge_queued_volume(double delta) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (StateInbox& message : state_queue_) {
+            auto* call = std::get_if<CallMsg>(&message);
+            if (call == nullptr || call->method != "transport_command" || call->args.empty() || call->args[0].kind != WireValue::Kind::String) {
+                continue;
+            }
+            std::string& text = call->args[0].text;
+            const size_t action = text.find("\"volumeBump\"");
+            const size_t value_key = text.find("\"value\":");
+            if (action == std::string::npos || value_key == std::string::npos) {
+                continue;
+            }
+            const char* start = text.c_str() + value_key + 8;
+            char* end = nullptr;
+            const double current = std::strtod(start, &end);
+            if (end == start) {
+                continue;
+            }
+            // Rolling up banks steps that the player never plays once the
+            // level is already at the top. Adding the downward steps onto
+            // that bank is the delay before the volume can fall.
+            const bool reversed = (current > 0 && delta < 0) || (current < 0 && delta > 0);
+            char number[32];
+            std::snprintf(number, sizeof(number), "%.2f", reversed ? delta : current + delta);
+            text.replace(value_key + 8, static_cast<size_t>(end - start), number);
+            return true;
+        }
+        return false;
     }
 
     // True when a playback call is sitting in the queue. The state thread's

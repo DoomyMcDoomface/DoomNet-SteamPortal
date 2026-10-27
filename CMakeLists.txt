@@ -110,6 +110,7 @@ set(DOOMNET_CORE
     src/shortcut.cpp
     src/payload.cpp
     src/resident.cpp
+    src/global_hotkeys.cpp
     src/json_wire.cpp
     src/cdp_socket.cpp
     src/page_bridge.cpp
