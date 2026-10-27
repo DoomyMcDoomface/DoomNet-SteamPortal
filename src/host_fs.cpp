@@ -623,6 +623,26 @@ int host_lua_searcher(lua_State* L) {
 }  // namespace
 
 std::string patched_player_module(const std::string& module, std::string source) {
+    if (module == "settings") {
+        std::string normalized;
+        normalized.reserve(source.size());
+        for (char ch : source) {
+            if (ch != '\r') {
+                normalized.push_back(ch);
+            }
+        }
+        const std::string old_keys = "\tmediaKeysEnabled = true,\n";
+        const std::string new_keys = "\tmediaKeysEnabled = true,\n\tglobalControl = false,\n";
+        const size_t keys_at = normalized.find(old_keys);
+        if (keys_at == std::string::npos) {
+            if (normalized.find("mediaKeysEnabled") != std::string::npos) {
+                log_event(L"warn", L"lua", L"The player settings did not list mediaKeysEnabled in the usual place, so Global Control cannot be saved.");
+            }
+            return source;
+        }
+        normalized.replace(keys_at, old_keys.size(), new_keys);
+        return normalized;
+    }
     if (module != "library" && module != "id3" && module != "playlist_file" && module != "playlists" && module != "main") {
         return source;
     }
@@ -1044,6 +1064,9 @@ std::string patched_player_module(const std::string& module, std::string source)
             "\t\t\t\tchanged = changed + 1\n"
             "\t\t\tend\n";
         const std::string new_sync =
+            "\t\t\tif playlists._load_hidden then\n"
+            "\t\t\t\tplaylists._load_hidden()\n"
+            "\t\t\tend\n"
             "\t\t\tlocal lists = playlist_file.read_all and playlist_file.read_all(path) or nil\n"
             "\t\t\tif lists == nil and playlist_file.read then\n"
             "\t\t\t\tlocal parsed = playlist_file.read(path)\n"
@@ -1072,6 +1095,12 @@ std::string patched_player_module(const std::string& module, std::string source)
             "\t\t\t\t\t\tlocal id = file_playlist_id(idKey)\n"
             "\t\t\t\t\t\tseen[id] = true\n"
             "\t\t\t\t\t\tseenHere[id] = true\n"
+            "\t\t\t\t\t\tif playlists._hidden and playlists._hidden[id] then\n"
+            "\t\t\t\t\t\t\tif state.byId[id] then\n"
+            "\t\t\t\t\t\t\t\tstate.byId[id] = nil\n"
+            "\t\t\t\t\t\t\t\tchanged = changed + 1\n"
+            "\t\t\t\t\t\t\tend\n"
+            "\t\t\t\t\t\telse\n"
             "\t\t\t\t\t\tlocal existing = state.byId[id]\n"
             "\t\t\t\t\t\tlocal name = parsed.name or \"\"\n"
             "\t\t\t\t\t\tif not existing or existing.sourcePath ~= path or existing.name ~= name or not same_ids(existing.trackIds or {}, trackIds) then\n"
@@ -1082,6 +1111,7 @@ std::string patched_player_module(const std::string& module, std::string source)
             "\t\t\t\t\t\t\t\tsourcePath = path,\n"
             "\t\t\t\t\t\t\t}\n"
             "\t\t\t\t\t\t\tchanged = changed + 1\n"
+            "\t\t\t\t\t\tend\n"
             "\t\t\t\t\t\tend\n"
             "\t\t\t\t\tend\n"
             "\t\t\t\tend\n"
@@ -1101,6 +1131,90 @@ std::string patched_player_module(const std::string& module, std::string source)
         } else {
             source.replace(sync_at, old_sync.size(), new_sync);
         }
+        const std::string old_delete =
+            "function playlists.delete(id)\n"
+            "\tlocal playlist = state.byId[id]\n"
+            "\tif not playlist or playlist.sourcePath then\n"
+            "\t\treturn false\n"
+            "\tend\n"
+            "\tstate.byId[id] = nil\n"
+            "\tpersist()\n"
+            "\treturn true\n"
+            "end\n";
+        const std::string new_delete =
+            "function playlists._load_hidden()\n"
+            "\tif playlists._hiddenLoaded or not state.dataDir then\n"
+            "\t\tplaylists._hidden = playlists._hidden or {}\n"
+            "\t\treturn\n"
+            "\tend\n"
+            "\tplaylists._hiddenLoaded = true\n"
+            "\tplaylists._hidden = {}\n"
+            "\tlocal hiddenFile = fs.join(state.dataDir, \"playlist_hidden.json\")\n"
+            "\tif not fs.exists(hiddenFile) then\n"
+            "\t\treturn\n"
+            "\tend\n"
+            "\tlocal okH, contentH = pcall(utils.read_file, hiddenFile)\n"
+            "\tif not okH or type(contentH) ~= \"string\" or contentH == \"\" then\n"
+            "\t\treturn\n"
+            "\tend\n"
+            "\tlocal okD, decodedH = pcall(json.decode, contentH)\n"
+            "\tif not okD or type(decodedH) ~= \"table\" then\n"
+            "\t\treturn\n"
+            "\tend\n"
+            "\tfor _, hid in ipairs(decodedH) do\n"
+            "\t\tif type(hid) == \"string\" and hid ~= \"\" then\n"
+            "\t\t\tplaylists._hidden[hid] = true\n"
+            "\t\tend\n"
+            "\tend\n"
+            "end\n"
+            "\n"
+            "local function persist_hidden()\n"
+            "\tlocal list = {}\n"
+            "\tfor hid in pairs(playlists._hidden or {}) do\n"
+            "\t\tlist[#list + 1] = hid\n"
+            "\tend\n"
+            "\tutils.write_file(fs.join(state.dataDir, \"playlist_hidden.json\"), json.encode(list))\n"
+            "end\n"
+            "\n"
+            "function playlists.dismiss(id)\n"
+            "\tplaylists._load_hidden()\n"
+            "\tlocal key = tostring(id or \"\")\n"
+            "\tlocal playlist = state.byId[key]\n"
+            "\tif not playlist then\n"
+            "\t\tfor storedId, item in pairs(state.byId) do\n"
+            "\t\t\tif tostring(storedId) == key then\n"
+            "\t\t\t\tplaylist = item\n"
+            "\t\t\t\tbreak\n"
+            "\t\t\tend\n"
+            "\t\tend\n"
+            "\tend\n"
+            "\tif not playlist or not playlist.sourcePath then\n"
+            "\t\treturn false\n"
+            "\tend\n"
+            "\tplaylists._hidden[tostring(playlist.id)] = true\n"
+            "\tstate.byId[playlist.id] = nil\n"
+            "\tpersist_hidden()\n"
+            "\tpersist()\n"
+            "\treturn true\n"
+            "end\n"
+            "\n"
+            "function playlists.delete(id)\n"
+            "\tlocal playlist = state.byId[id]\n"
+            "\tif not playlist or playlist.sourcePath then\n"
+            "\t\treturn false\n"
+            "\tend\n"
+            "\tstate.byId[id] = nil\n"
+            "\tpersist()\n"
+            "\treturn true\n"
+            "end\n";
+        const size_t delete_at = source.find(old_delete);
+        if (delete_at == std::string::npos) {
+            if (source.find("function playlists.delete") != std::string::npos) {
+                log_event(L"warn", L"lua", L"A playlist read from a file cannot be removed from the player, so it comes back on the next scan.");
+            }
+        } else {
+            source.replace(delete_at, old_delete.size(), new_delete);
+        }
         return source;
     }
     if (module == "main") {
@@ -1119,6 +1233,16 @@ std::string patched_player_module(const std::string& module, std::string source)
             "\t\treturn json.encode({ text = \"\" })\n"
             "\tend\n"
             "\treturn json.encode(payload)\n"
+            "end\n"
+            "\n"
+            "function dismiss_playlist(id)\n"
+            "\tlocal ok, removed = pcall(playlists.dismiss, id)\n"
+            "\tif not ok or not removed then\n"
+            "\t\tlogger:warn(\"[SteamMusicPlayer] could not remove playlist \" .. tostring(id) .. \" from the player.\")\n"
+            "\t\treturn json.encode({ ok = false })\n"
+            "\tend\n"
+            "\tlogger:info(\"[SteamMusicPlayer] removed playlist \" .. tostring(id) .. \" from the player. The playlist file was not deleted.\")\n"
+            "\treturn json.encode({ ok = true })\n"
             "end\n";
         const size_t lists_at = source.find(old_lists);
         if (lists_at == std::string::npos) {

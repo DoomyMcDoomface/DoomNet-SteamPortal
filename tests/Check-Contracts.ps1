@@ -34,7 +34,7 @@ $pluginPath = Join-Path $player "plugin.json"
 if (Need-File $pluginPath) {
     $plugin = Get-Content -LiteralPath $pluginPath -Raw | ConvertFrom-Json
     if ($plugin.name -ne "SteamMusicPlayer") { Fail "plugin.json name is '$($plugin.name)'" }
-    if ($plugin.version -ne "1.14.1") { Fail "plugin.json version is '$($plugin.version)'" }
+    if ($plugin.version -ne "1.15.0") { Fail "plugin.json version is '$($plugin.version)'" }
     if ($plugin.backendType -ne "lua") { Fail "plugin.json backendType is '$($plugin.backendType)'" }
 }
 
@@ -50,12 +50,12 @@ Need-Text $main 'require("millennium")' "lua host module"
 Need-Text $main "millennium.add_browser_js" "browser js registration"
 Need-Text $main "millennium.call_frontend_method" "frontend push"
 Need-Text $main "millennium.ready()" "ready call"
-Need-Text $bootstrap 'var ASSET_REV = "20261001-version-1.14.1"' "asset revision"
+Need-Text $bootstrap 'var ASSET_REV = "20261027-version-1.15.0"' "asset revision"
 Need-Text $bootstrap "mix-image.js" "bootstrap load order"
 Need-Text $bootstrap "window.__steamMusicPlayerBootstrap" "bootstrap guard"
 Need-Text $bootstrap "window !== window.top" "iframe bail"
 Need-Text $ui 'var PLUGIN_NAME = "SteamMusicPlayer"' "ui plugin name"
-Need-Text $ui 'var PLUGIN_VERSION = "1.14.1"' "about version"
+Need-Text $ui 'var PLUGIN_VERSION = "1.15.0"' "about version"
 Need-Text $ui "Millennium.callServerMethod(PLUGIN_NAME, method, argsArray || [])" "ui call shape"
 Need-Text $ui "__SMP_RECEIVERS__" "frontend fan-out"
 Need-Text $engine "Millennium.callServerMethod(PLUGIN_NAME, method, argsArray || [])" "engine call shape"
@@ -77,6 +77,7 @@ Need-Text $cmake "src/shortcut.cpp" "shortcut helper is not linked"
 Need-Text $cmake "src/payload.cpp" "payload copy is not linked"
 Need-Text $cmake "src/dummy_child.cpp" "hidden child program is not built"
 Need-Text (Join-Path $repo "src\launch.cpp") "Refusing to start steam.exe" "steam.exe launch guard"
+Need-Text (Join-Path $repo "src\state_thread.cpp") 'patched_player_module("main", std::move(source))' "main.lua is patched before it runs"
 if ((Need-File $cmake) -and (Select-String -LiteralPath $cmake -Pattern "find_package" -Quiet)) {
     Fail "CMakeLists.txt calls find_package; this skeleton must not fetch Lua or Millennium"
 }

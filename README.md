@@ -2,7 +2,7 @@
 
 Windowless host that runs Doomy's SteamTunes and Steam-Skin inside the Steam client.
 
-- Player: SteamTunes **1.14.1**. That number is `plugin.json` and the About line.
+- Player: SteamTunes **1.15.0**. That number is `plugin.json` and the About line.
 - Skin: Steam-Skin **0.9.27** (`skin.json`).
 
 Open `D:\Documents\Repos\DoomNet.code-workspace` so this repo, SteamTunes, and SteamSkin are one window. Agents only see the folders in the workspace that is open.

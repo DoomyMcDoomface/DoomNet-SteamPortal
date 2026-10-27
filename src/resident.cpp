@@ -2,6 +2,7 @@
 
 #include "art_thumbs.h"
 #include "browser_thread.h"
+#include "global_hotkeys.h"
 #include "host_config.h"
 #include "log.h"
 #include "page_bridge.h"
@@ -137,7 +138,7 @@ void wait_for_library_grid(SteamPage& page, HANDLE stop, const std::wstring& roo
         if (state == "shown" || state == "skipped") {
             break;
         }
-        Sleep(250);
+        global_keys_wait(250);
     }
     present_client_windows();
     std::wstring wide_state(state.begin(), state.end());
@@ -252,10 +253,13 @@ void run_attach(HANDLE stop, const std::wstring& root, const std::wstring& steam
     } else if (!browser_error.empty()) {
         log_event(L"error", L"browser", browser_error.c_str());
     }
+    if (host_up) {
+        global_keys_bind(bus, root + L"\\player\\backend\\data\\settings.json");
+    }
 
     while (!stop_requested(stop, root)) {
         if (steam.empty() || !main_lua_present(backend)) {
-            Sleep(250);
+            global_keys_wait(250);
             continue;
         }
         const unsigned long pid = find_steam_pid(steam + L"\\steam.exe");
@@ -271,7 +275,7 @@ void run_attach(HANDLE stop, const std::wstring& root, const std::wstring& steam
                 holding_pid = 0;
             }
             presented_pid = 0;
-            Sleep(250);
+            global_keys_wait(250);
             continue;
         }
         if (presented_pid != pid && holding_pid != pid) {
@@ -279,7 +283,7 @@ void run_attach(HANDLE stop, const std::wstring& root, const std::wstring& steam
             holding_pid = pid;
         }
         if (page_up && pid == attached_pid) {
-            Sleep(250);
+            global_keys_wait(250);
             continue;
         }
         if (page_up) {
@@ -289,13 +293,13 @@ void run_attach(HANDLE stop, const std::wstring& root, const std::wstring& steam
         InjectResult injected = inject_running_client(steam + L"\\steam.exe");
         if (!injected.ok) {
             log_event(L"warn", L"inject", injected.detail.c_str());
-            Sleep(1000);
+            global_keys_wait(1000);
             continue;
         }
         std::wstring error;
         if (!page.start(std::move(injected.pipe), injected.session_id, *browser, bus, error)) {
             log_event(L"error", L"cdp", error.c_str());
-            Sleep(1000);
+            global_keys_wait(1000);
             continue;
         }
         page_up = true;
@@ -314,6 +318,7 @@ void run_attach(HANDLE stop, const std::wstring& root, const std::wstring& steam
     if (page_up) {
         page.stop();
     }
+    global_keys_stop();
     if (host_up) {
         browser->stop();
         state->stop();
@@ -415,13 +420,30 @@ void run_resident(StartupMode mode, const std::wstring& root, const std::wstring
         log_event(L"info", L"startup", detail.c_str());
     }
 
+    if (host_up) {
+        global_keys_bind(bus, root + L"\\player\\backend\\data\\settings.json");
+    }
+
     for (;;) {
-        if (stop != nullptr && WaitForSingleObject(stop, 250) == WAIT_OBJECT_0) {
-            log_event(L"info", L"startup", L"Local\\DoomNetStop was signaled. The host is leaving.");
-            break;
+        if (host_up) {
+            global_keys_poll();
         }
-        if (stop == nullptr) {
-            Sleep(250);
+        // The keyboard hook is delivered on this thread. A plain wait would
+        // miss the key and Windows would pass it to the focused program.
+        const DWORD slice = global_keys_armed() ? 30u : 250u;
+        if (stop != nullptr) {
+            const DWORD wake = MsgWaitForMultipleObjects(1, &stop, FALSE, slice, QS_ALLINPUT);
+            if (wake == WAIT_OBJECT_0) {
+                log_event(L"info", L"startup", L"Local\\DoomNetStop was signaled. The host is leaving.");
+                break;
+            }
+        } else {
+            Sleep(slice);
+        }
+        MSG message;
+        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
         }
         if (stop_flag_present(root)) {
             const std::wstring detail = L"'" + flag + L"' is present. The host is leaving.";
@@ -430,6 +452,7 @@ void run_resident(StartupMode mode, const std::wstring& root, const std::wstring
         }
     }
 
+    global_keys_stop();
     if (host_up) {
         browser->stop();
         state->stop();
