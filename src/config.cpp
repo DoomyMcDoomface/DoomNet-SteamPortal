@@ -1,6 +1,7 @@
 // Spec: Process model, Installer.
 // config.json: steamPath (string), player (bool), skin (bool),
-// playerColor ("steam" or "red"). Unknown keys and partial objects fail
+// playerColor ("steam" or "red"), and optional streamTunesRelay.
+// Unknown keys and malformed values fail
 // the load. The file is capped at 64 KiB so a bad write cannot pin memory.
 
 #include "config.h"
@@ -162,6 +163,18 @@ bool has_dotdot(const std::wstring& path) {
     return path.find(L"..") != std::wstring::npos;
 }
 
+bool valid_streamtunes_relay(const std::wstring& value) {
+    if (value.empty()) {
+        return true;
+    }
+    if (value.size() > 512 || value.find_first_of(L"\r\n\t") != std::wstring::npos) {
+        return false;
+    }
+    return value.rfind(L"wss://", 0) == 0 ||
+           value.rfind(L"ws://127.0.0.1", 0) == 0 ||
+           value.rfind(L"ws://localhost", 0) == 0;
+}
+
 bool parse_color(const std::wstring& text, PlayerColor& color) {
     if (text == L"steam") {
         color = PlayerColor::Steam;
@@ -281,6 +294,7 @@ ConfigLoad load_config_file(const std::wstring& path, Config& out, std::wstring&
     bool seen_player = false;
     bool seen_skin = false;
     bool seen_color = false;
+    bool seen_streamtunes_relay = false;
     skip_ws(parser);
     if (parser.cur < parser.end && *parser.cur == L'}') {
         ++parser.cur;
@@ -320,8 +334,14 @@ ConfigLoad load_config_file(const std::wstring& path, Config& out, std::wstring&
                     break;
                 }
                 seen_color = true;
+            } else if (key == L"streamTunesRelay") {
+                if (seen_streamtunes_relay || !parse_string(parser, parsed.streamtunes_relay) || !valid_streamtunes_relay(parsed.streamtunes_relay)) {
+                    fail(parser, L"config.json streamTunesRelay must be empty, an https-secured WebSocket URL starting with 'wss://', or a local test URL. The file was not applied.");
+                    break;
+                }
+                seen_streamtunes_relay = true;
             } else {
-                fail(parser, L"config.json key '" + key + L"' is not recognized. The only keys are steamPath, player, skin, and playerColor. The file was not applied.");
+                fail(parser, L"config.json key '" + key + L"' is not recognized. The only keys are steamPath, player, skin, playerColor, and streamTunesRelay. The file was not applied.");
                 break;
             }
             skip_ws(parser);
@@ -358,6 +378,8 @@ bool save_config_file(const std::wstring& path, const Config& config, std::wstri
     json += config.skin ? "true" : "false";
     json += ",\n  \"playerColor\": ";
     json += config.player_color == PlayerColor::Red ? "\"red\"" : "\"steam\"";
+    json += ",\n  \"streamTunesRelay\": ";
+    append_json_string(json, config.streamtunes_relay);
     json += "\n}\n";
     if (json.size() > kMaxConfigBytes) {
         error = L"Refusing to save '" + path + L"' because the JSON would be " + std::to_wstring(json.size()) + L" bytes, over the 65536 byte limit.";

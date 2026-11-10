@@ -8,6 +8,7 @@
 #include <winhttp.h>
 
 #include "boot_script.inc"
+#include "streamtunes_client.inc"
 
 #include <atomic>
 #include <chrono>
@@ -182,7 +183,7 @@ void set_boot_preamble(const std::string& javascript) {
 
 std::string boot_script_for_page() {
     const char* boot = boot_script_text();
-    const std::string body = boot != nullptr ? boot : "";
+    const std::string body = std::string(kStreamTunesClientScript) + "\n" + (boot != nullptr ? boot : "");
     if (g_boot_preamble.empty()) {
         return body;
     }

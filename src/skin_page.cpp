@@ -3026,6 +3026,39 @@ std::string patched_player_ui_text() {
         "\t\tappendFeatureBlock: function (parent, key, label, hint, buildDependants) {\n";
     const std::string party_methods = R"PARTY(		doomnetPartyService: function () {
 			var service = window.__doomnetParty;
+			var config = window.__doomnetPartyConfig;
+			var Client = window.DoomNetStreamTunes && window.DoomNetStreamTunes.StreamTunesClient;
+			if (!service && config && config.url && config.name && typeof Client === "function") {
+				service = new Client({
+					url: config.url,
+					name: config.name,
+					iceServers: config.iceServers,
+					onRemoteStream: function (stream) {
+						if (!App.engine) {
+							Engine.init();
+						}
+						if (!App.engine || !App.engine.doomnetAttachRemoteStream) {
+							throw new Error("StreamTunes listener audio is not available");
+						}
+						if (App.engine.pause) {
+							App.engine.pause();
+						}
+						App.engine.doomnetAttachRemoteStream(stream);
+					},
+					onRemoteStop: function () {
+						if (App.engine && App.engine.doomnetDetachStream) {
+							App.engine.doomnetDetachStream();
+						}
+						if (App.engine && App.engine.doomnetDetachRemoteStream) {
+							App.engine.doomnetDetachRemoteStream();
+						}
+					},
+					onNotice: function (message) {
+						UI.showToast(message, 8000);
+					},
+				});
+				window.__doomnetParty = service;
+			}
 			return service && typeof service.snapshot === "function" ? service : null;
 		},
 
@@ -3052,9 +3085,27 @@ std::string patched_player_ui_text() {
 			if (!service || typeof service[action] !== "function") {
 				return Promise.reject(new Error("StreamTunes service is not available"));
 			}
+			if (action === "start") {
+				if (!App.engine) {
+					Engine.init();
+				}
+				if (!App.engine || !App.engine.doomnetAttachStream) {
+					return Promise.reject(new Error("StreamTunes host audio is not available"));
+				}
+				value = App.engine.doomnetAttachStream();
+			}
 			return Promise.resolve(service[action](value)).then(function () {
+				if (action === "end" && App.engine && App.engine.doomnetDetachStream) {
+					App.engine.doomnetDetachStream();
+				}
+				if (action === "leave" && App.engine && App.engine.doomnetDetachRemoteStream) {
+					App.engine.doomnetDetachRemoteStream();
+				}
 				UI.safely("renderLibrary", UI.renderLibrary);
 			}).catch(function (err) {
+				if (action === "start" && App.engine && App.engine.doomnetDetachStream) {
+					App.engine.doomnetDetachStream();
+				}
 				UI.showToast(err && err.message ? err.message : "StreamTunes couldn't complete that action.", 8000);
 				throw err;
 			});

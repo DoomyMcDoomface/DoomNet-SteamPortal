@@ -95,6 +95,7 @@ set(DOOMNET_CORE
     src/browser_thread.cpp
     src/steam_attach.cpp
     src/stream.cpp
+    src/streamtunes_identity.cpp
     src/host_fs.cpp
     src/host_io.cpp
     src/process_job.cpp
@@ -129,7 +130,16 @@ add_custom_command(
     VERBATIM
 )
 add_custom_target(doomnet_boot DEPENDS "${DOOMNET_BOOT_INC}")
-set_source_files_properties(src/page_bridge.cpp PROPERTIES OBJECT_DEPENDS "${DOOMNET_BOOT_INC}")
+set(DOOMNET_STREAMTUNES_CLIENT_INC "${CMAKE_CURRENT_BINARY_DIR}/generated/streamtunes_client.inc")
+add_custom_command(
+    OUTPUT "${DOOMNET_STREAMTUNES_CLIENT_INC}"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_CURRENT_BINARY_DIR}/generated"
+    COMMAND ${CMAKE_COMMAND} -DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/src/streamtunes_client.js -DOUTPUT=${DOOMNET_STREAMTUNES_CLIENT_INC} -DSYMBOL=kStreamTunesClientScript -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_boot.cmake
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/streamtunes_client.js" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_boot.cmake"
+    VERBATIM
+)
+add_custom_target(doomnet_streamtunes_client DEPENDS "${DOOMNET_STREAMTUNES_CLIENT_INC}")
+set_source_files_properties(src/page_bridge.cpp PROPERTIES OBJECT_DEPENDS "${DOOMNET_BOOT_INC};${DOOMNET_STREAMTUNES_CLIENT_INC}")
 
 # src/boot_script.js is injected as text by the page bridge. It is not a compiled source.
 add_executable(DoomNet WIN32 src/main.cpp ${DOOMNET_CORE})
@@ -215,18 +225,18 @@ doomnet_apply(DoomNet)
 doomnet_apply(DoomNetFoundationTests)
 doomnet_apply(DoomNetHostTests)
 doomnet_apply(DoomNetLiveProof)
-add_dependencies(DoomNet doomnet_boot)
-add_dependencies(DoomNetFoundationTests doomnet_boot)
+add_dependencies(DoomNet doomnet_boot doomnet_streamtunes_client)
+add_dependencies(DoomNetFoundationTests doomnet_boot doomnet_streamtunes_client)
 add_dependencies(DoomNetFoundationTests doomnet_wsock32)
 add_dependencies(DoomNetFoundationTests DoomNetFakeSteam)
 add_dependencies(DoomNetFoundationTests DoomNetFakeWebHelper)
 add_dependencies(DoomNetFoundationTests doomnet_fake_steamui)
-add_dependencies(DoomNetHostTests doomnet_boot)
+add_dependencies(DoomNetHostTests doomnet_boot doomnet_streamtunes_client)
 target_link_libraries(DoomNet PRIVATE doomnet_lua doomnet_cjson)
 target_link_libraries(DoomNetFoundationTests PRIVATE doomnet_lua doomnet_cjson)
 target_link_libraries(DoomNetHostTests PRIVATE doomnet_lua doomnet_cjson dbghelp)
 target_link_libraries(DoomNetLiveProof PRIVATE doomnet_lua doomnet_cjson)
-add_dependencies(DoomNetLiveProof doomnet_boot)
+add_dependencies(DoomNetLiveProof doomnet_boot doomnet_streamtunes_client)
 add_dependencies(DoomNetLiveProof doomnet_wsock32)
 doomnet_apply(DoomNetDummyChild)
 doomnet_apply(DoomNetWizardMock)

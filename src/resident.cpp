@@ -10,6 +10,7 @@
 #include "skin_page.h"
 #include "state_thread.h"
 #include "steam_attach.h"
+#include "streamtunes_identity.h"
 #include "wide_io.h"
 
 #include <windows.h>
@@ -149,7 +150,8 @@ void wait_for_library_grid(SteamPage& page, HANDLE stop, const std::wstring& roo
     }
 }
 
-void prepare_installed_files(const std::wstring& steam, const std::wstring& backend) {
+void prepare_installed_files(const std::wstring& steam, const std::wstring& backend, const Config& config) {
+    std::string page_preamble;
     const std::wstring skin_dir = L"D:\\Documents\\Repos\\SteamSkin";
     const std::wstring skin_json = skin_dir + L"\\skin.json";
     if (file_exists(skin_json)) {
@@ -158,11 +160,25 @@ void prepare_installed_files(const std::wstring& steam, const std::wstring& back
         const SkinPreamble preamble = load_skin_preamble(skin_json, true);
         log_event(preamble.ok ? L"info" : L"warn", L"inject", preamble.detail.c_str());
         if (preamble.ok) {
-            set_boot_preamble(preamble.javascript);
+            page_preamble = preamble.javascript;
         }
     } else {
         log_event(L"warn", L"inject", (L"'" + skin_json + L"' is not there, so this launch kept the skin files already in Steam.").c_str());
     }
+    std::wstring party_error;
+    const std::string party_config = streamtunes_config_script(steam, config.streamtunes_relay, party_error);
+    if (!party_config.empty()) {
+        if (!page_preamble.empty()) {
+            page_preamble += "\n";
+        }
+        page_preamble += party_config;
+        log_event(L"info", L"party", (L"Enabled the StreamTunes relay '" + config.streamtunes_relay + L"' for the logged-in Steam persona.").c_str());
+    } else if (!party_error.empty()) {
+        log_event(L"warn", L"party", party_error.c_str());
+    } else {
+        log_event(L"info", L"party", L"StreamTunes has no relay URL in config.json, so its controls stay hidden.");
+    }
+    set_boot_preamble(page_preamble);
     const wchar_t* assets[] = {L"bootstrap.js", L"steam-music-player.css", L"audio-engine.js", L"steam-music-player.js", L"mix-image.js"};
     const std::wstring asset_src = L"D:\\Documents\\Repos\\SteamTunes\\backend\\assets\\frontend";
     const int copied_assets = copy_named(asset_src, steam + L"\\steamui\\steam-music-player", assets, 5);
@@ -210,7 +226,7 @@ void prepare_installed_files(const std::wstring& steam, const std::wstring& back
     }
 }
 
-void run_attach(HANDLE stop, const std::wstring& root, const std::wstring& steam) {
+void run_attach(HANDLE stop, const std::wstring& root, const std::wstring& steam, const Config& config) {
     const std::wstring flag = root + L"\\stop.flag";
     const std::wstring backend = root + L"\\player\\backend";
     log_event(L"info", L"startup", (L"Attaching to Steam the user started. This host stays up so the next launch loads the player and the skin. Stop it by signaling Local\\DoomNetStop or by creating '" + flag + L"'.").c_str());
@@ -219,7 +235,7 @@ void run_attach(HANDLE stop, const std::wstring& root, const std::wstring& steam
     } else if (!main_lua_present(backend)) {
         log_event(L"error", L"lua", (L"'" + backend + L"\\main.lua' is not there, so the player was not started.").c_str());
     } else {
-        prepare_installed_files(steam, backend);
+        prepare_installed_files(steam, backend, config);
     }
 
     ArtThumbs thumbs;
@@ -384,7 +400,7 @@ void run_resident(StartupMode mode, const std::wstring& root, const std::wstring
     }
 
     if (mode == StartupMode::Attach) {
-        run_attach(stop, root, steam);
+        run_attach(stop, root, steam, config);
         if (stop != nullptr) {
             CloseHandle(stop);
         }

@@ -11,6 +11,7 @@ struct Config {
     bool player = false;
     bool skin = false;
     PlayerColor player_color = PlayerColor::Steam;
+    std::wstring streamtunes_relay;
 };
 
 enum class ConfigLoad { Missing, Ok, Error };

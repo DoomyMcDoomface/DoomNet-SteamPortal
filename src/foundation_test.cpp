@@ -16,6 +16,7 @@
 #include "steam_attach.h"
 #include "steam_discover.h"
 #include "state_thread.h"
+#include "streamtunes_identity.h"
 #include "toggle.h"
 #include "wide_io.h"
 
@@ -80,11 +81,14 @@ void test_config() {
     config.player = true;
     config.skin = true;
     config.player_color = doomnet::PlayerColor::Red;
+    config.streamtunes_relay = L"wss://relay.example/streamtunes";
     std::wstring error;
     check(doomnet::save_config_file(path, config, error), "save config");
     doomnet::Config loaded;
     check(doomnet::load_config_file(path, loaded, error) == doomnet::ConfigLoad::Ok, "load config");
-    check(loaded.steam_path == config.steam_path && loaded.player && loaded.skin && loaded.player_color == doomnet::PlayerColor::Red, "round trip");
+    check(loaded.steam_path == config.steam_path && loaded.player && loaded.skin && loaded.player_color == doomnet::PlayerColor::Red &&
+              loaded.streamtunes_relay == config.streamtunes_relay,
+          "round trip");
 
     doomnet::Config missing;
     check(doomnet::load_config_file(dir + L"\\nope.json", missing, error) == doomnet::ConfigLoad::Missing, "missing config");
@@ -95,6 +99,7 @@ void test_config() {
         "{\"player\":true,}",
         "{",
         "{\"unknown\":true}",
+        "{\"streamTunesRelay\":\"http://relay.example/streamtunes\"}",
         "{\"player\":true,\"player\":false,\"skin\":false,\"playerColor\":\"steam\",\"steamPath\":\"C:\\\\Steam\"}",
     };
     for (const char* text : bad) {
@@ -125,6 +130,32 @@ void test_config() {
         CloseHandle(huge_file);
     }
     check(doomnet::load_config_file(huge_path, config, error) == doomnet::ConfigLoad::Error, "oversize config accepted");
+}
+
+void test_streamtunes_identity() {
+    const std::wstring steam = temp_dir();
+    const std::wstring config_dir = steam + L"\\config";
+    CreateDirectoryW(config_dir.c_str(), nullptr);
+    const char vdf[] =
+        "\"users\"\n{\n"
+        "\t\"76561198000000001\"\n\t{\n"
+        "\t\t\"AccountName\"\t\"private-login\"\n"
+        "\t\t\"PersonaName\"\t\"Other Persona\"\n"
+        "\t\t\"AutoLogin\"\t\"0\"\n\t}\n"
+        "\t\"76561198000000002\"\n\t{\n"
+        "\t\t\"AccountName\"\t\"also-private\"\n"
+        "\t\t\"PersonaName\"\t\"Party Host\"\n"
+        "\t\t\"AutoLogin\"\t\"1\"\n\t}\n"
+        "}\n";
+    std::wstring error;
+    check(doomnet::write_new_file(config_dir + L"\\loginusers.vdf", vdf, sizeof(vdf) - 1, error), "write Steam persona fixture");
+    std::string persona;
+    check(doomnet::streamtunes_persona(steam, persona, error) && persona == "Party Host", "StreamTunes did not select the automatic Steam persona");
+    const std::string script = doomnet::streamtunes_config_script(steam, L"wss://relay.example/streamtunes", error);
+    check(script.find("Party Host") != std::string::npos && script.find("private-login") == std::string::npos &&
+              script.find("wss://relay.example/streamtunes") != std::string::npos,
+          "StreamTunes exposed the account login or omitted its guarded page config");
+    check(doomnet::streamtunes_config_script(steam, L"", error).empty() && error.empty(), "an empty relay URL still enabled StreamTunes");
 }
 
 void test_color() {
@@ -784,8 +815,14 @@ void test_skin_page() {
               patched_ui.find("End Party") != std::string::npos &&
               patched_ui.find("Configure Party") != std::string::npos &&
               patched_ui.find("window.__doomnetParty") != std::string::npos &&
-              patched_ui.find("window.__doomnetTabHost") != std::string::npos,
+              patched_ui.find("window.__doomnetTabHost") != std::string::npos &&
+              patched_ui.find("window.__doomnetPartyConfig") != std::string::npos &&
+              patched_ui.find("new Client({") != std::string::npos,
           "the DoomNet library row has no guarded listening-party controls");
+    check(patched_ui.find("value = App.engine.doomnetAttachStream();") != std::string::npos &&
+              patched_ui.find("App.engine.doomnetAttachRemoteStream(stream);") != std::string::npos &&
+              patched_ui.find("App.engine.doomnetDetachRemoteStream();") != std::string::npos,
+          "the party portal is not connected to the tested host and listener audio paths");
     check(patched_ui.find("text: \"End Session\"") != std::string::npos &&
               patched_ui.find("end.disabled = !(state.active && state.role === \"host\")") != std::string::npos &&
               patched_ui.find("state.count + \"/\" + state.capacity") != std::string::npos &&
@@ -831,6 +868,10 @@ void test_skin_page() {
     doomnet::set_boot_preamble(fixture.javascript);
     const std::string page = doomnet::boot_script_for_page();
     check(page.find("libraryroot.custom.css") != std::string::npos && page.find("callServerMethod") != std::string::npos, "page script did not carry the skin config and the binding");
+    check(page.find("DoomNetStreamTunes") != std::string::npos &&
+              page.find("StreamTunesClient") != std::string::npos &&
+              page.find("RTCPeerConnection") != std::string::npos,
+          "the page script does not carry the tested StreamTunes WebRTC client");
     doomnet::set_boot_preamble("");
     check(patched_ui.find("doomnetThumbUrl") != std::string::npos && patched_ui.find("/steam-music-player/art/thumbs/") != std::string::npos, "the grids still load full-size covers instead of thumbnails");
     check(patched_ui.find("doomnetPageWarmDisabled") != std::string::npos && patched_ui.find("doomnetWarmThumbs: function () {\n\t\t\treturn;") != std::string::npos, "the page still prefetches every cover and can hang Steam's web helper");
@@ -1095,6 +1136,7 @@ void test_art_thumbs() {
 int main() {
     test_paths();
     test_config();
+    test_streamtunes_identity();
     test_color();
     test_log_threads();
     test_steam();
