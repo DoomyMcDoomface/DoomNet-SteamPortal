@@ -54,6 +54,11 @@ std::string store_player_script();
 // file on disk is not changed.
 std::string patched_player_ui_text();
 
+// The player engine with a second output path that is created only while a
+// StreamTunes host session is active. The normal dry/wet -> masterGain path
+// is not changed while that output is detached.
+std::string patched_player_audio_engine_text();
+
 // The player CSS with the now-playing artist link limited to its text.
 // The SteamTunes file on disk is not changed.
 std::string patched_player_css_text();

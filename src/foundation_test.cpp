@@ -757,6 +757,23 @@ void test_skin_page() {
     const std::string store_player = doomnet::store_player_script();
     check(store_player.find("smp-plugin-ui") != std::string::npos, "the store player script is missing the player UI");
     const std::string patched_ui = doomnet::patched_player_ui_text();
+    const std::string patched_engine = doomnet::patched_player_audio_engine_text();
+    check(patched_engine.find("this.doomnetStreamLimiter = null") != std::string::npos &&
+              patched_engine.find("AudioEngine.prototype.doomnetAttachStream") != std::string::npos &&
+              patched_engine.find("AudioEngine.prototype.doomnetDetachStream") != std::string::npos,
+          "the player engine has no detachable StreamTunes output");
+    check(patched_engine.find("this.dryGain.connect(this.masterGain);") != std::string::npos &&
+              patched_engine.find("this.wetGain.connect(this.masterGain);") != std::string::npos,
+          "the detached StreamTunes output changed the default masterGain path");
+    const size_t stream_attach_at = patched_engine.find("AudioEngine.prototype.doomnetAttachStream");
+    const size_t stream_node_at = patched_engine.find("ctx.createMediaStreamDestination");
+    check(stream_attach_at != std::string::npos && stream_node_at > stream_attach_at,
+          "the StreamTunes destination is created before a host session attaches it");
+    check(patched_engine.find("this.dryGain.disconnect(limiter)") != std::string::npos &&
+              patched_engine.find("this.wetGain.disconnect(limiter)") != std::string::npos &&
+              patched_engine.find("this.doomnetDetachStream();\n\t\tthis.beginCommand();") != std::string::npos,
+          "ending ownership does not detach the StreamTunes output");
+    check(store_player.find("doomnetAttachStream") != std::string::npos, "the store player still receives the unpatched audio engine");
     check(patched_ui.find("get_album_art_b64") != std::string::npos, "the player UI was not given the cover file fallback");
     check(patched_ui.find("url.indexOf(\"data:\") !== 0 && !artUrlMatchesAlbum(album, url)") != std::string::npos, "a cover already read as bytes is not painted on every tile");
     check(patched_ui.find("incomingRev <= (UI.pointerBusyRev || 0)") != std::string::npos && patched_ui.find("UI.pointerRevFloor") != std::string::npos, "a late page reply can still overwrite the page that was just opened");

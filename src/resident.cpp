@@ -182,6 +182,19 @@ void prepare_installed_files(const std::wstring& steam, const std::wstring& back
             log_event(L"warn", L"payload", write_error.c_str());
         }
     }
+    const std::string patched_engine = patched_player_audio_engine_text();
+    if (!patched_engine.empty()) {
+        std::wstring write_error;
+        const std::wstring engine_path = backend + L"\\assets\\frontend\\audio-engine.js";
+        const std::wstring published_engine = steam + L"\\steamui\\steam-music-player\\audio-engine.js";
+        if (!write_new_file(engine_path, patched_engine.data(), patched_engine.size(), write_error) && !write_error.empty()) {
+            log_event(L"warn", L"payload", write_error.c_str());
+        }
+        write_error.clear();
+        if (!write_new_file(published_engine, patched_engine.data(), patched_engine.size(), write_error) && !write_error.empty()) {
+            log_event(L"warn", L"payload", write_error.c_str());
+        }
+    }
     const std::string patched_css = patched_player_css_text();
     if (!patched_css.empty()) {
         std::wstring write_error;

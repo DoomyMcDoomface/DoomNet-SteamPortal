@@ -3157,6 +3157,112 @@ std::string patched_player_ui_text() {
     return ui;
 }
 
+std::string patched_player_audio_engine_text() {
+    const std::wstring dir = L"D:\\Documents\\Repos\\SteamTunes\\backend\\assets\\frontend";
+    std::string engine = read_skin_text(dir, "audio-engine.js");
+    if (engine.empty()) {
+        return {};
+    }
+    std::string normalized;
+    normalized.reserve(engine.size());
+    for (char ch : engine) {
+        if (ch != '\r') {
+            normalized.push_back(ch);
+        }
+    }
+    engine.swap(normalized);
+
+    const std::string old_fields =
+        "\t\tthis.convolverSpec = null;\n"
+        "\t\tthis.reverbConnected = false;\n"
+        "\t\tthis.currentDuckDb = 0;\n"
+        "\t}\n";
+    const std::string new_fields =
+        "\t\tthis.convolverSpec = null;\n"
+        "\t\tthis.reverbConnected = false;\n"
+        "\t\tthis.currentDuckDb = 0;\n"
+        "\n"
+        "\t\t// StreamTunes is a separate, lazy branch. These references do not\n"
+        "\t\t// create or connect Web Audio nodes during normal playback.\n"
+        "\t\tthis.doomnetStreamLimiter = null;\n"
+        "\t\tthis.doomnetStreamDestination = null;\n"
+        "\t\tthis.doomnetStreamActive = false;\n"
+        "\t}\n";
+    const size_t fields_at = engine.find(old_fields);
+    if (fields_at != std::string::npos) {
+        engine.replace(fields_at, old_fields.size(), new_fields);
+    } else {
+        log_event(L"warn", L"stream", L"The player engine constructor changed, so the detached StreamTunes fields were not added.");
+    }
+
+    const std::string dispose_anchor = "\tAudioEngine.prototype.dispose = function () {\n";
+    const std::string stream_methods =
+        "\t// A host session forks the already-mixed dry and wet buses before\n"
+        "\t// masterGain. The default dry/wet -> masterGain connections stay\n"
+        "\t// untouched, and no stream node exists until this method is called.\n"
+        "\tAudioEngine.prototype.doomnetAttachStream = function () {\n"
+        "\t\tif (this.doomnetStreamActive && this.doomnetStreamDestination) {\n"
+        "\t\t\treturn this.doomnetStreamDestination.stream;\n"
+        "\t\t}\n"
+        "\t\tvar ctx = this.ensureContext();\n"
+        "\t\tif (!this.dryGain || !this.wetGain || !ctx.createMediaStreamDestination) {\n"
+        "\t\t\tthrow new Error(\"StreamTunes output is not available in this audio context\");\n"
+        "\t\t}\n"
+        "\t\tvar limiter = ctx.createDynamicsCompressor();\n"
+        "\t\tlimiter.threshold.value = TRUE_PEAK_CEILING_DB - 0.5;\n"
+        "\t\tlimiter.knee.value = 0;\n"
+        "\t\tlimiter.ratio.value = 20;\n"
+        "\t\tlimiter.attack.value = 0.001;\n"
+        "\t\tlimiter.release.value = 0.1;\n"
+        "\t\tvar destination = ctx.createMediaStreamDestination();\n"
+        "\t\tthis.dryGain.connect(limiter);\n"
+        "\t\tthis.wetGain.connect(limiter);\n"
+        "\t\tlimiter.connect(destination);\n"
+        "\t\tthis.doomnetStreamLimiter = limiter;\n"
+        "\t\tthis.doomnetStreamDestination = destination;\n"
+        "\t\tthis.doomnetStreamActive = true;\n"
+        "\t\treturn destination.stream;\n"
+        "\t};\n"
+        "\n"
+        "\tAudioEngine.prototype.doomnetDetachStream = function () {\n"
+        "\t\tvar limiter = this.doomnetStreamLimiter;\n"
+        "\t\tvar destination = this.doomnetStreamDestination;\n"
+        "\t\tif (limiter) {\n"
+        "\t\t\ttry { if (this.dryGain) this.dryGain.disconnect(limiter); } catch (e) {}\n"
+        "\t\t\ttry { if (this.wetGain) this.wetGain.disconnect(limiter); } catch (e) {}\n"
+        "\t\t\ttry { limiter.disconnect(); } catch (e) {}\n"
+        "\t\t}\n"
+        "\t\tif (destination && destination.stream && destination.stream.getTracks) {\n"
+        "\t\t\tdestination.stream.getTracks().forEach(function (track) { track.stop(); });\n"
+        "\t\t}\n"
+        "\t\tthis.doomnetStreamLimiter = null;\n"
+        "\t\tthis.doomnetStreamDestination = null;\n"
+        "\t\tthis.doomnetStreamActive = false;\n"
+        "\t};\n"
+        "\n";
+    const size_t dispose_at = engine.find(dispose_anchor);
+    if (dispose_at != std::string::npos) {
+        engine.insert(dispose_at, stream_methods);
+    } else {
+        log_event(L"warn", L"stream", L"The player engine did not contain dispose, so the StreamTunes output methods were not added.");
+    }
+
+    const std::string old_dispose =
+        "\tAudioEngine.prototype.dispose = function () {\n"
+        "\t\tthis.beginCommand();\n";
+    const std::string new_dispose =
+        "\tAudioEngine.prototype.dispose = function () {\n"
+        "\t\tthis.doomnetDetachStream();\n"
+        "\t\tthis.beginCommand();\n";
+    const size_t dispose_body_at = engine.find(old_dispose);
+    if (dispose_body_at != std::string::npos) {
+        engine.replace(dispose_body_at, old_dispose.size(), new_dispose);
+    } else {
+        log_event(L"warn", L"stream", L"The player engine dispose body changed, so StreamTunes output cleanup was not attached.");
+    }
+    return engine;
+}
+
 std::string patched_player_css_text() {
     const std::wstring dir = L"D:\\Documents\\Repos\\SteamTunes\\backend\\assets\\frontend";
     std::string css = read_skin_text(dir, "steam-music-player.css");
@@ -3322,7 +3428,7 @@ std::string store_player_script() {
     const std::wstring dir = L"D:\\Documents\\Repos\\SteamTunes\\backend\\assets\\frontend";
     const std::string css = patched_player_css_text();
     const std::string mix = read_skin_text(dir, "mix-image.js");
-    const std::string engine = read_skin_text(dir, "audio-engine.js");
+    const std::string engine = patched_player_audio_engine_text();
     const std::string ui = patched_player_ui_text();
     if (css.empty() || engine.empty() || ui.empty()) {
         log_event(L"warn", L"inject", L"The store player files could not be read from the SteamTunes frontend folder, so the store page was not given a player.");

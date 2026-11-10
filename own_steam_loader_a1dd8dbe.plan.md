@@ -193,6 +193,10 @@ The original todos are not done, except that the foundation they sit on is. Do t
 5. After that proof, remove the Millennium publish path from SteamTunes, then the paired rename of `millennium` to `host` and `window.Millennium` to `window.Host` in SteamTunes and DoomNet together.
 6. Last, wire `tools\wizard.xaml` to `apply_install` and ship that window. Do not design a second wizard. Until step 6, Finish installs nothing.
 
+### StreamTunes foundation
+
+The listening-party output is a separate DoomNet-only branch in the patched `audio-engine.js`. The unchanged SteamTunes source and Millennium player keep the original dry/wet-to-`masterGain` path. DoomNet adds only null StreamTunes fields to the engine constructor. `doomnetAttachStream` lazily creates a dedicated limiter and `MediaStreamAudioDestinationNode`, connects the already-ducked dry and wet buses to it before `masterGain`, and returns that media stream. `doomnetDetachStream` disconnects only that branch and stops its track. `dispose` calls detach before closing the context. With no host session, there is no stream node and the default graph is unchanged. `resident.cpp` publishes this patched engine beside the patched UI and CSS, and store pages receive the same patched engine inline.
+
 ## What the products do not share
 
 There is no DoomNet HTTP API, no shared library, and no plugin bus. The player already speaks `Millennium.callServerMethod` and `millennium.call_frontend_method`. The skin already speaks `skin.json` `Patches`. DoomNet is the host that those two existing contracts run on. A player release does not require a DoomNet rebuild unless one of those contracts changes. A skin release does not require a player release.
