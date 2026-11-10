@@ -2,16 +2,16 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { RoomRegistry } = require("../relay-core");
+const { RoomRegistry, normalizeIceServers } = require("../relay-core");
 
-function fixture() {
+function fixture(options) {
 	const messages = new Map();
 	const registry = new RoomRegistry((client, message) => {
 		if (!messages.has(client)) {
 			messages.set(client, []);
 		}
 		messages.get(client).push(message);
-	});
+	}, options);
 	function client(name) {
 		const value = { name };
 		messages.set(value, []);
@@ -48,6 +48,29 @@ test("a room is the host plus four listeners", () => {
 	f.registry.handle(extra, { type: "join", code: created.code, name: "Extra Listener" });
 	assert.equal(f.last(extra, "error").code, "room-full");
 	assert.equal(f.last(host, "roster").count, 5);
+});
+
+test("direct-only and TURN configurations are distributed when a room is entered", () => {
+	const direct = fixture({ iceServers: [] });
+	const directHost = direct.client("direct-host");
+	direct.registry.handle(directHost, { type: "create", name: "Direct Host" });
+	assert.deepEqual(direct.last(directHost, "created").iceServers, []);
+
+	const iceServers = [{
+		urls: ["stun:stun.example.net", "turns:turn.example.net:5349"],
+		username: "temporary-user",
+		credential: "temporary-secret",
+	}];
+	const relayed = fixture({ iceServers });
+	const host = relayed.client("host");
+	const listener = relayed.client("listener");
+	relayed.registry.handle(host, { type: "create", name: "Host" });
+	const created = relayed.last(host, "created");
+	relayed.registry.handle(listener, { type: "join", code: created.code, name: "Listener" });
+	assert.deepEqual(created.iceServers, iceServers);
+	assert.deepEqual(relayed.last(listener, "joined").iceServers, iceServers);
+
+	assert.throws(() => normalizeIceServers([{ urls: "https://not-an-ice-server.example" }]));
 });
 
 test("signals stay inside a room and listener stats reach only its host roster", () => {

@@ -3,7 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { WebSocket } = require("ws");
-const { createRelayServer } = require("../server");
+const { createRelayServer, parseIceServers } = require("../server");
 
 function openSocket(url) {
 	return new Promise((resolve, reject) => {
@@ -30,8 +30,30 @@ function nextMessage(socket, type) {
 	});
 }
 
+test("deployment ICE configuration is validated without echoing credentials", () => {
+	assert.deepEqual(parseIceServers("[]"), []);
+	assert.deepEqual(parseIceServers(JSON.stringify([{
+		urls: "turns:turn.example.net:5349",
+		username: "temporary-user",
+		credential: "temporary-secret",
+	}])), [{
+		urls: "turns:turn.example.net:5349",
+		username: "temporary-user",
+		credential: "temporary-secret",
+	}]);
+	assert.throws(
+		() => parseIceServers('[{"urls":"https://bad","credential":"do-not-print-this"}]'),
+		(error) => !error.message.includes("do-not-print-this"),
+	);
+});
+
 test("the real WebSocket wrapper creates, joins, signals, and cleanly ends a room", async () => {
-	const relay = createRelayServer({ log: () => {} });
+	const iceServers = [{
+		urls: "turns:turn.example.net:5349",
+		username: "temporary-user",
+		credential: "temporary-secret",
+	}];
+	const relay = createRelayServer({ log: () => {}, iceServers });
 	await new Promise((resolve) => relay.server.listen(0, "127.0.0.1", resolve));
 	const address = relay.server.address();
 	const base = "ws://127.0.0.1:" + address.port + "/streamtunes";
@@ -42,6 +64,7 @@ test("the real WebSocket wrapper creates, joins, signals, and cleanly ends a roo
 		host.send(JSON.stringify({ type: "create", name: "Host Persona" }));
 		const created = await createdPromise;
 		assert.match(created.code, /^[A-Z2-9]{4}-[A-Z2-9]{4}$/);
+		assert.deepEqual(created.iceServers, iceServers);
 
 		const joinedPromise = nextMessage(listener, "joined");
 		const peerJoinedPromise = nextMessage(host, "peer-joined");
@@ -49,6 +72,7 @@ test("the real WebSocket wrapper creates, joins, signals, and cleanly ends a roo
 		const joined = await joinedPromise;
 		const peerJoined = await peerJoinedPromise;
 		assert.equal(peerJoined.peerId, joined.peerId);
+		assert.deepEqual(joined.iceServers, iceServers);
 
 		const signalPromise = nextMessage(listener, "signal");
 		host.send(JSON.stringify({

@@ -4,6 +4,40 @@ const crypto = require("node:crypto");
 
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const MAX_ROOM_SIZE = 5;
+const ICE_URL = /^(stun|stuns|turn|turns):/i;
+
+function normalizeIceServers(value) {
+	if (value === undefined) {
+		return undefined;
+	}
+	if (!Array.isArray(value) || value.length > 8) {
+		throw new Error("ICE servers must be an array with at most eight entries");
+	}
+	return value.map((entry) => {
+		if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+			throw new Error("Each ICE server must be an object");
+		}
+		const urls = Array.isArray(entry.urls) ? entry.urls.slice() : [entry.urls];
+		if (!urls.length || urls.length > 8 || urls.some((url) =>
+			typeof url !== "string" || url.length > 2048 || !ICE_URL.test(url))) {
+			throw new Error("ICE server URLs must use stun, stuns, turn, or turns");
+		}
+		const result = { urls: Array.isArray(entry.urls) ? urls : urls[0] };
+		if (entry.username !== undefined) {
+			if (typeof entry.username !== "string" || entry.username.length > 512) {
+				throw new Error("ICE server usernames must be strings of at most 512 characters");
+			}
+			result.username = entry.username;
+		}
+		if (entry.credential !== undefined) {
+			if (typeof entry.credential !== "string" || entry.credential.length > 512) {
+				throw new Error("ICE server credentials must be strings of at most 512 characters");
+			}
+			result.credential = entry.credential;
+		}
+		return result;
+	});
+}
 
 function safeName(value) {
 	const name = String(value || "").trim();
@@ -15,8 +49,10 @@ function safeCode(value) {
 }
 
 class RoomRegistry {
-	constructor(send) {
+	constructor(send, options) {
+		options = options || {};
 		this.send = send;
+		this.iceServers = normalizeIceServers(options.iceServers);
 		this.clients = new Map();
 		this.rooms = new Map();
 	}
@@ -64,7 +100,9 @@ class RoomRegistry {
 		member.room = room;
 		room.members.set(member.id, client);
 		this.rooms.set(code.replace("-", ""), room);
-		this.reply(client, { type: "created", code, peerId: member.id, count: 1, capacity: MAX_ROOM_SIZE });
+		const created = { type: "created", code, peerId: member.id, count: 1, capacity: MAX_ROOM_SIZE };
+		if (this.iceServers !== undefined) created.iceServers = this.iceServers;
+		this.reply(client, created);
 		this.publish(room);
 	}
 
@@ -89,14 +127,16 @@ class RoomRegistry {
 		member.role = "listener";
 		member.room = room;
 		room.members.set(member.id, client);
-		this.reply(client, {
+		const joined = {
 			type: "joined",
 			code: room.code,
 			peerId: member.id,
 			hostId: this.clients.get(room.host).id,
 			count: room.members.size,
 			capacity: MAX_ROOM_SIZE,
-		});
+		};
+		if (this.iceServers !== undefined) joined.iceServers = this.iceServers;
+		this.reply(client, joined);
 		this.reply(room.host, { type: "peer-joined", peerId: member.id, name });
 		this.publish(room);
 	}
@@ -219,4 +259,4 @@ class RoomRegistry {
 	}
 }
 
-module.exports = { RoomRegistry, MAX_ROOM_SIZE, safeCode, safeName };
+module.exports = { RoomRegistry, MAX_ROOM_SIZE, normalizeIceServers, safeCode, safeName };

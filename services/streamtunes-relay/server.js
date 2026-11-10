@@ -2,10 +2,19 @@
 
 const http = require("node:http");
 const { WebSocket, WebSocketServer } = require("ws");
-const { RoomRegistry } = require("./relay-core");
+const { RoomRegistry, normalizeIceServers } = require("./relay-core");
 
 function log(level, sentence) {
 	process.stdout.write(new Date().toISOString() + " " + level + " pid=" + process.pid + " party: " + sentence + "\n");
+}
+
+function parseIceServers(value) {
+	if (!value) return undefined;
+	try {
+		return normalizeIceServers(JSON.parse(value));
+	} catch (error) {
+		throw new Error("STREAMTUNES_ICE_SERVERS_JSON is invalid; TURN credentials were not logged");
+	}
 }
 
 function createRelayServer(options) {
@@ -32,7 +41,7 @@ function createRelayServer(options) {
 		if (client.readyState === WebSocket.OPEN) {
 			client.send(JSON.stringify(message));
 		}
-	});
+	}, { iceServers: options.iceServers });
 
 	sockets.on("connection", (socket, request) => {
 		const peerId = registry.add(socket);
@@ -80,10 +89,17 @@ function createRelayServer(options) {
 
 if (require.main === module) {
 	const port = Number(process.env.PORT || 8787);
-	const relay = createRelayServer();
-	relay.server.listen(port, "0.0.0.0", () => {
-		log("info", "Listening on port " + port + " at '/streamtunes'.");
-	});
+	try {
+		const relay = createRelayServer({
+			iceServers: parseIceServers(process.env.STREAMTUNES_ICE_SERVERS_JSON),
+		});
+		relay.server.listen(port, "0.0.0.0", () => {
+			log("info", "Listening on port " + port + " at '/streamtunes'.");
+		});
+	} catch (error) {
+		log("error", "Startup failed because " + error.message + ".");
+		process.exitCode = 1;
+	}
 }
 
-module.exports = { createRelayServer };
+module.exports = { createRelayServer, parseIceServers };

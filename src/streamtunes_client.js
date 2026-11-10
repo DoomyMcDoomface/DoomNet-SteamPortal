@@ -25,13 +25,41 @@
 		}
 	}
 
+	function normalizeIceServers(value) {
+		if (!Array.isArray(value) || value.length > 8) {
+			throw new Error("Invalid StreamTunes ICE server list");
+		}
+		return value.map(function (entry) {
+			if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+				throw new Error("Invalid StreamTunes ICE server");
+			}
+			var urls = Array.isArray(entry.urls) ? entry.urls.slice() : [entry.urls];
+			if (!urls.length || urls.length > 8 || urls.some(function (url) {
+				return typeof url !== "string" || url.length > 2048 || !/^(stun|stuns|turn|turns):/i.test(url);
+			})) {
+				throw new Error("Invalid StreamTunes ICE server URL");
+			}
+			var result = { urls: Array.isArray(entry.urls) ? urls : urls[0] };
+			if (entry.username !== undefined) {
+				if (typeof entry.username !== "string" || entry.username.length > 512) throw new Error("Invalid StreamTunes ICE username");
+				result.username = entry.username;
+			}
+			if (entry.credential !== undefined) {
+				if (typeof entry.credential !== "string" || entry.credential.length > 512) throw new Error("Invalid StreamTunes ICE credential");
+				result.credential = entry.credential;
+			}
+			return result;
+		});
+	}
+
 	function StreamTunesClient(options) {
 		options = options || {};
 		this.url = String(options.url || "");
 		this.name = String(options.name || "").trim();
 		this.WebSocketImpl = options.WebSocket || (typeof WebSocket !== "undefined" ? WebSocket : null);
 		this.PeerImpl = options.RTCPeerConnection || (typeof RTCPeerConnection !== "undefined" ? RTCPeerConnection : null);
-		this.iceServers = options.iceServers || [{ urls: "stun:stun.l.google.com:19302" }];
+		this.iceServers = normalizeIceServers(options.iceServers === undefined ?
+			[{ urls: "stun:stun.l.google.com:19302" }] : options.iceServers);
 		this.onRemoteStream = options.onRemoteStream || function () {};
 		this.onRemoteStop = options.onRemoteStop || function () {};
 		this.onNotice = options.onNotice || function () {};
@@ -251,6 +279,9 @@
 	StreamTunesClient.prototype.handle = async function (message) {
 		switch (message.type) {
 			case "created":
+				if (Object.prototype.hasOwnProperty.call(message, "iceServers")) {
+					this.iceServers = normalizeIceServers(message.iceServers);
+				}
 				this.role = "host";
 				this.active = true;
 				this.code = String(message.code || "");
@@ -260,6 +291,9 @@
 				this.publish();
 				return;
 			case "joined":
+				if (Object.prototype.hasOwnProperty.call(message, "iceServers")) {
+					this.iceServers = normalizeIceServers(message.iceServers);
+				}
 				this.role = "listener";
 				this.active = true;
 				this.code = String(message.code || "");
@@ -360,9 +394,15 @@
 	};
 
 	StreamTunesClient.prototype.fail = function (message) {
+		this.rejectPending(new Error(message || "Stream Error"));
 		this.reset();
 		if (message) this.onNotice(message);
 	};
 
-	return { StreamTunesClient: StreamTunesClient, cleanCode: cleanCode, noticeFor: noticeFor };
+	return {
+		StreamTunesClient: StreamTunesClient,
+		cleanCode: cleanCode,
+		normalizeIceServers: normalizeIceServers,
+		noticeFor: noticeFor,
+	};
 });

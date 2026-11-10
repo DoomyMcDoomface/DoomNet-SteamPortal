@@ -33,7 +33,8 @@ class MockSocket {
 
 class MockPeer {
 	static instances = [];
-	constructor() {
+	constructor(options) {
+		this.options = options;
 		this.connectionState = "new";
 		this.tracks = [];
 		this.localDescription = null;
@@ -133,11 +134,61 @@ test("a host sends one mixed stream to a newly joined peer", async () => {
 	await tick();
 	await tick();
 	const peer = MockPeer.instances[0];
+	assert.deepEqual(peer.options.iceServers, []);
 	assert.equal(peer.tracks.length, 1);
 	assert.equal(peer.tracks[0].stream, stream);
 	const offer = socket.sent.find((message) => message.type === "signal");
 	assert.equal(offer.to, "listener");
 	assert.equal(offer.data.description.type, "offer");
+});
+
+test("relay-provided TURN settings are used for new peers", async () => {
+	const client = new StreamTunesClient(options());
+	const started = client.start(audioStream());
+	const socket = MockSocket.instances[0];
+	socket.open();
+	socket.receive({
+		type: "created",
+		code: "K7QM-4P2L",
+		peerId: "host",
+		count: 1,
+		capacity: 5,
+		iceServers: [{
+			urls: ["stun:stun.example.net", "turns:turn.example.net:5349"],
+			username: "ephemeral-user",
+			credential: "ephemeral-secret",
+		}],
+	});
+	await started;
+	socket.receive({ type: "peer-joined", peerId: "listener", name: "Friend" });
+	await tick();
+	await tick();
+	assert.deepEqual(MockPeer.instances[0].options.iceServers, [{
+		urls: ["stun:stun.example.net", "turns:turn.example.net:5349"],
+		username: "ephemeral-user",
+		credential: "ephemeral-secret",
+	}]);
+});
+
+test("invalid relay-provided ICE settings reject the pending party", async () => {
+	const notices = [];
+	const client = new StreamTunesClient(options({ onNotice: (value) => notices.push(value) }));
+	const joined = client.join("K7QM-4P2L");
+	const socket = MockSocket.instances[0];
+	socket.open();
+	socket.receive({
+		type: "joined",
+		code: "K7QM-4P2L",
+		peerId: "listener",
+		hostId: "host",
+		count: 2,
+		capacity: 5,
+		iceServers: [{ urls: "https://not-an-ice-server.example" }],
+	});
+	await assert.rejects(joined, /Stream Error/);
+	assert.equal(client.snapshot().active, false);
+	assert.equal(MockPeer.instances.length, 0);
+	assert.equal(notices.at(-1), "Stream Error");
 });
 
 test("a listener answers an offer, attaches remote audio, and reports its own ping", async () => {
