@@ -2,6 +2,9 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const vm = require("node:vm");
 const { StreamTunesClient, cleanCode, noticeFor } = require("../../../src/streamtunes_client");
 
 class MockSocket {
@@ -101,6 +104,17 @@ test("codes and end reasons are normalized for the player", () => {
 	assert.equal(noticeFor("host-disconnected"), "Host Disconnected");
 	assert.equal(noticeFor("connection-lost"), "Connection Lost");
 	assert.equal(noticeFor("stream-error"), "Stream Error");
+});
+
+test("the embedded client exports to the page even if Steam defines module", () => {
+	const source = fs.readFileSync(path.resolve(__dirname, "../../../src/streamtunes_client.js"), "utf8");
+	const page = {
+		document: {},
+		module: { exports: {} },
+	};
+	vm.runInNewContext(source, page);
+	assert.equal(typeof page.DoomNetStreamTunes.StreamTunesClient, "function");
+	assert.deepEqual(Object.keys(page.module.exports), []);
 });
 
 test("a host sends one mixed stream to a newly joined peer", async () => {

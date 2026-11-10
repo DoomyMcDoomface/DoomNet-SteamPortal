@@ -1,7 +1,8 @@
 (function (root, factory) {
 	"use strict";
 	var api = factory();
-	if (typeof module === "object" && module.exports) {
+	var isBrowser = root && root.document;
+	if (!isBrowser && typeof module === "object" && module.exports) {
 		module.exports = api;
 	} else {
 		root.DoomNetStreamTunes = api;
