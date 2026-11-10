@@ -3287,6 +3287,7 @@ std::string patched_player_css_text() {
         ".smp-eq-fader-label{margin-top:6px;color:var(--smp-text-dim);font-size:9px;font-weight:400;letter-spacing:0.02em;}\n"
         ".smp-settings-slider{flex:0 1 240px;width:240px;max-width:240px;accent-color:var(--smp-accent);}\n"
         ".smp-settings-readout{width:36ch;min-width:36ch;max-width:36ch;flex:0 0 36ch;overflow:hidden;white-space:nowrap;text-align:left;}\n"
+        ".smp-folder-path{flex:0 1 auto;min-width:0;}\n"
         "html.smp-ctx-overlay .smp-setting-block{padding:12px 0;}\n"
         "html.smp-ctx-overlay .smp-feature-block{margin-top:0;padding:12px 0;}\n"
         "html.smp-ctx-overlay .smp-settings-row,html.smp-ctx-overlay .smp-setting-block .smp-settings-row{display:flex;align-items:center;flex-wrap:nowrap;gap:12px;margin:0;}\n"
