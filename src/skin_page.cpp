@@ -650,13 +650,18 @@ std::string patched_player_ui_text() {
         "\t\t\tif (!document.documentElement.classList.contains(\"smp-ctx-overlay\") && (UI.libraryGroupBy === \"artist\" || UI.libraryGroupBy === \"album\" || UI.libraryGroupBy === \"genre\")) {\n"
         "\t\t\t\tUI.doomnetMountArtSize(chrome.subtabs);\n"
         "\t\t\t}\n"
+        "\t\t\tUI.doomnetMountPartySlot(chrome.subtabs);\n"
         "\n"
-        "\t\t\tvar pane = chrome.pane;\n";
+        "\t\t\tvar pane = chrome.pane;\n"
+        "\t\t\tif (UI.doomnetPartyPage) {\n"
+        "\t\t\t\tUI.doomnetRenderParty(pane);\n"
+        "\t\t\t\treturn;\n"
+        "\t\t\t}\n";
     const size_t subtabs_end_at = ui.find(old_subtabs_end);
     if (subtabs_end_at != std::string::npos) {
         ui.replace(subtabs_end_at, old_subtabs_end.size(), new_subtabs_end);
     } else {
-        log_event(L"warn", L"inject", L"The player UI did not build the Artist row, so the artwork size control has nowhere to sit.");
+        log_event(L"warn", L"inject", L"The player UI did not build the Artist row, so its artwork and listening-party controls have nowhere to sit.");
     }
     const std::string old_seek_step =
         "\t\t\t\tmax: String(duration > 0 ? duration : 1),\n"
@@ -3017,6 +3022,213 @@ std::string patched_player_ui_text() {
     } else {
         log_event(L"warn", L"inject", L"The player UI did not contain the volume command, so a global volume key cannot change the player.");
     }
+    const std::string old_party_feature =
+        "\t\tappendFeatureBlock: function (parent, key, label, hint, buildDependants) {\n";
+    const std::string party_methods = R"PARTY(		doomnetPartyService: function () {
+			var service = window.__doomnetParty;
+			return service && typeof service.snapshot === "function" ? service : null;
+		},
+
+		doomnetPartySnapshot: function () {
+			var service = UI.doomnetPartyService();
+			var value = service ? service.snapshot() : null;
+			value = value && typeof value === "object" ? value : {};
+			var role = value.role === "host" || value.role === "listener" ? value.role : "none";
+			var active = value.active === true && role !== "none";
+			var count = Math.max(0, Math.min(5, Number(value.count) || (active && role === "host" ? 1 : 0)));
+			return {
+				active: active,
+				role: role,
+				count: count,
+				capacity: 5,
+				code: String(value.code || ""),
+				pingMs: value.pingMs == null ? null : Math.max(0, Math.round(Number(value.pingMs) || 0)),
+				peers: Array.isArray(value.peers) ? value.peers : [],
+			};
+		},
+
+		doomnetPartyAction: function (action, value) {
+			var service = UI.doomnetPartyService();
+			if (!service || typeof service[action] !== "function") {
+				return Promise.reject(new Error("StreamTunes service is not available"));
+			}
+			return Promise.resolve(service[action](value)).then(function () {
+				UI.safely("renderLibrary", UI.renderLibrary);
+			}).catch(function (err) {
+				UI.showToast(err && err.message ? err.message : "StreamTunes couldn't complete that action.", 8000);
+				throw err;
+			});
+		},
+
+		doomnetOpenParty: function (startHost) {
+			if (!UI.doomnetPartyService()) {
+				return;
+			}
+			if (!UI.doomnetPartyPage) {
+				UI.doomnetPartyPreviousGroup = UI.libraryGroupBy;
+			}
+			UI.doomnetPartyPage = true;
+			UI.safely("renderLibrary", UI.renderLibrary);
+			if (startHost) {
+				UI.doomnetPartyAction("start").catch(function () {});
+			}
+		},
+
+		doomnetCloseParty: function () {
+			UI.doomnetPartyPage = false;
+			if (UI.doomnetPartyPreviousGroup) {
+				UI.libraryGroupBy = UI.doomnetPartyPreviousGroup;
+			}
+			UI.safely("renderLibrary", UI.renderLibrary);
+		},
+
+		doomnetBindParty: function () {
+			var service = UI.doomnetPartyService();
+			if (!service || UI._doomnetPartyBound || typeof service.subscribe !== "function") {
+				return;
+			}
+			UI._doomnetPartyBound = true;
+			service.subscribe(function () {
+				if (UI.doomnetPartyPage || (UI.root && UI.root.querySelector(".doomnet-party-slot"))) {
+					UI.safely("renderLibrary", UI.renderLibrary);
+				}
+			});
+		},
+
+		doomnetMountPartySlot: function (row) {
+			var service = UI.doomnetPartyService();
+			if (!row || !service || !window.__doomnetTabHost) {
+				return;
+			}
+			UI.doomnetBindParty();
+			var state = UI.doomnetPartySnapshot();
+			var slot = el("div", "doomnet-party-slot");
+			function button(text, className, click) {
+				var btn = el("button", "smp-subtab doomnet-party-button" + (className ? " " + className : ""), {
+					type: "button",
+					text: text,
+				});
+				btn.addEventListener("click", click);
+				slot.appendChild(btn);
+			}
+			if (!state.active) {
+				button("Start Listening Party", "", function () { UI.doomnetOpenParty(true); });
+			} else if (state.role === "host") {
+				button("End Party", "is-danger", function () {
+					UI.doomnetPartyAction("end").then(UI.doomnetCloseParty).catch(function () {});
+				});
+				button("Configure Party", "", function () { UI.doomnetOpenParty(false); });
+			} else {
+				button("Leave Party", "is-danger", function () {
+					UI.doomnetPartyAction("leave").then(UI.doomnetCloseParty).catch(function () {});
+				});
+				button("Configure Party", "", function () { UI.doomnetOpenParty(false); });
+			}
+			row.appendChild(slot);
+		},
+
+		doomnetCopyPartyCode: function (code) {
+			if (!code) {
+				return;
+			}
+			var copied = navigator.clipboard && navigator.clipboard.writeText
+				? navigator.clipboard.writeText(code)
+				: Promise.reject(new Error("clipboard unavailable"));
+			copied.then(function () {
+				UI.showToast("Listening Party code copied.", 2500);
+			}).catch(function () {
+				UI.showToast("Select the code and press Ctrl+C.", 5000);
+			});
+		},
+
+		doomnetRenderParty: function (pane) {
+			if (!pane) {
+				return;
+			}
+			var state = UI.doomnetPartySnapshot();
+			var activeTab = UI.root && UI.root.querySelector(".smp-view-library > .smp-subtabs .smp-subtab.active");
+			if (activeTab) {
+				activeTab.classList.remove("active");
+			}
+			pane.innerHTML = "";
+			var page = el("div", "doomnet-party-page");
+			page.appendChild(el("div", "doomnet-party-title", { text: "Listening Party" }));
+			page.appendChild(el("div", "doomnet-party-count", { text: state.count + "/" + state.capacity }));
+			if (state.role === "listener" && state.pingMs != null) {
+				page.appendChild(el("div", "doomnet-party-ping", { text: state.pingMs + " ms to host" }));
+			}
+			var code = el("button", "doomnet-party-code", {
+				type: "button",
+				text: state.code || "\u2014",
+				title: state.code ? "Copy Listening Party code" : "A code appears when a session starts",
+			});
+			code.disabled = !state.code;
+			code.addEventListener("click", function () { UI.doomnetCopyPartyCode(state.code); });
+			page.appendChild(code);
+			if (state.role === "listener" && state.active) {
+				var leave = el("button", "smp-btn smp-btn-danger doomnet-party-end", {
+					type: "button",
+					text: "Leave Party",
+				});
+				leave.addEventListener("click", function () {
+					UI.doomnetPartyAction("leave").then(UI.doomnetCloseParty).catch(function () {});
+				});
+				page.appendChild(leave);
+			} else {
+				var end = el("button", "smp-btn smp-btn-danger doomnet-party-end", {
+					type: "button",
+					text: "End Session",
+				});
+				end.disabled = !(state.active && state.role === "host");
+				end.addEventListener("click", function () {
+					if (!end.disabled) {
+						UI.doomnetPartyAction("end").then(UI.doomnetCloseParty).catch(function () {});
+					}
+				});
+				page.appendChild(end);
+			}
+			if (state.active && state.role === "host") {
+				var roster = el("div", "smp-track-list doomnet-party-roster");
+				state.peers.forEach(function (peer, index) {
+					var row = el("div", "smp-track-row doomnet-party-peer");
+					var names = el("div", "smp-track-namecol");
+					names.appendChild(el("div", "smp-track-name", { text: String(peer.name || "Steam user") }));
+					var detail = index === 0 || peer.local
+						? "Local host"
+						: Math.max(0, Math.round(Number(peer.pingMs) || 0)) + " ms \u2014 " +
+							Math.max(0, Math.round(Number(peer.kbps) || 0)) + " kbps";
+					names.appendChild(el("div", "smp-track-sub", { text: detail }));
+					row.appendChild(names);
+					roster.appendChild(row);
+				});
+				page.appendChild(roster);
+			}
+			if (!state.active) {
+				var join = el("div", "doomnet-party-join");
+				var input = el("input", "smp-search doomnet-party-join-code", {
+					type: "text",
+					placeholder: "Enter a party code",
+				});
+				input.maxLength = 9;
+				var joinButton = el("button", "smp-btn", { type: "button", text: "Join Party" });
+				joinButton.addEventListener("click", function () {
+					UI.doomnetPartyAction("join", String(input.value || "").trim().toUpperCase()).catch(function () {});
+				});
+				join.appendChild(input);
+				join.appendChild(joinButton);
+				page.appendChild(join);
+			}
+			pane.appendChild(page);
+		},
+
+)PARTY";
+    const size_t party_feature_at = ui.find(old_party_feature);
+    if (party_feature_at != std::string::npos) {
+        ui.insert(party_feature_at, party_methods);
+    } else {
+        log_event(L"warn", L"stream", L"The player UI did not contain the settings feature block, so StreamTunes controls were not added.");
+    }
+
     const std::string old_feature =
         "\t\tappendFeatureBlock: function (parent, key, label, hint, buildDependants) {\n";
     const std::string new_feature =
@@ -3394,6 +3606,19 @@ std::string patched_player_css_text() {
         ".smp-settings-slider{flex:0 1 240px;width:240px;max-width:240px;accent-color:var(--smp-accent);}\n"
         ".smp-settings-readout{width:36ch;min-width:36ch;max-width:36ch;flex:0 0 36ch;overflow:hidden;white-space:nowrap;text-align:left;}\n"
         ".smp-folder-path{flex:0 1 auto;min-width:0;}\n"
+        "#doomnet-steamtunes-host .doomnet-party-slot{display:flex;align-items:center;gap:4px;margin-left:auto;}\n"
+        "#doomnet-steamtunes-host .doomnet-party-button.is-danger{color:var(--smp-danger,#c0392b);}\n"
+        "#doomnet-steamtunes-host .doomnet-party-page{display:flex;flex-direction:column;align-items:center;width:min(760px,100%);margin:32px auto 0;padding:24px;box-sizing:border-box;}\n"
+        "#doomnet-steamtunes-host .doomnet-party-title{color:var(--smp-text);font-size:22px;font-weight:600;}\n"
+        "#doomnet-steamtunes-host .doomnet-party-count{margin-top:12px;color:var(--smp-text-dim);font-size:15px;font-variant-numeric:tabular-nums;}\n"
+        "#doomnet-steamtunes-host .doomnet-party-ping{margin-top:4px;color:var(--smp-text-dim);font-size:12px;font-variant-numeric:tabular-nums;}\n"
+        "#doomnet-steamtunes-host .doomnet-party-code{margin:18px 0 14px;padding:8px 16px;border:1px solid var(--smp-accent-ring);border-radius:4px;background:var(--smp-accent-soft);color:var(--smp-accent);font:600 32px/1.2 \"Motiva Sans\",Arial,sans-serif;letter-spacing:0.18em;cursor:pointer;user-select:text;}\n"
+        "#doomnet-steamtunes-host .doomnet-party-code:disabled{border-color:var(--smp-border);background:transparent;color:var(--smp-text-dim);cursor:default;opacity:0.55;}\n"
+        "#doomnet-steamtunes-host .doomnet-party-end:disabled{opacity:0.4;cursor:default;}\n"
+        "#doomnet-steamtunes-host .doomnet-party-roster{width:min(620px,100%);margin-top:24px;}\n"
+        "#doomnet-steamtunes-host .doomnet-party-peer{cursor:default;}\n"
+        "#doomnet-steamtunes-host .doomnet-party-join{display:flex;align-items:center;gap:8px;margin-top:24px;}\n"
+        "#doomnet-steamtunes-host .doomnet-party-join-code{width:220px;flex:0 1 220px;text-transform:uppercase;letter-spacing:0.08em;}\n"
         "html.smp-ctx-overlay .smp-setting-block{padding:12px 0;}\n"
         "html.smp-ctx-overlay .smp-feature-block{margin-top:0;padding:12px 0;}\n"
         "html.smp-ctx-overlay .smp-settings-row,html.smp-ctx-overlay .smp-setting-block .smp-settings-row{display:flex;align-items:center;flex-wrap:nowrap;gap:12px;margin:0;}\n"

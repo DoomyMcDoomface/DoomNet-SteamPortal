@@ -774,6 +774,23 @@ void test_skin_page() {
               patched_engine.find("this.doomnetDetachStream();\n\t\tthis.beginCommand();") != std::string::npos,
           "ending ownership does not detach the StreamTunes output");
     check(store_player.find("doomnetAttachStream") != std::string::npos, "the store player still receives the unpatched audio engine");
+    check(patched_ui.find("doomnetMountPartySlot") != std::string::npos &&
+              patched_ui.find("Start Listening Party") != std::string::npos &&
+              patched_ui.find("End Party") != std::string::npos &&
+              patched_ui.find("Configure Party") != std::string::npos &&
+              patched_ui.find("window.__doomnetParty") != std::string::npos &&
+              patched_ui.find("window.__doomnetTabHost") != std::string::npos,
+          "the DoomNet library row has no guarded listening-party controls");
+    check(patched_ui.find("text: \"End Session\"") != std::string::npos &&
+              patched_ui.find("end.disabled = !(state.active && state.role === \"host\")") != std::string::npos &&
+              patched_ui.find("state.count + \"/\" + state.capacity") != std::string::npos &&
+              patched_ui.find("state.pingMs + \" ms to host\"") != std::string::npos &&
+              patched_ui.find("smp-track-list doomnet-party-roster") != std::string::npos,
+          "the Listening Party page does not harden End Session or show its room status");
+    check(doomnet::patched_player_css_text().find(".doomnet-party-slot{display:flex;align-items:center;gap:4px;margin-left:auto;}") != std::string::npos &&
+              doomnet::patched_player_css_text().find(".doomnet-party-code{") != std::string::npos &&
+              doomnet::patched_player_css_text().find("color:var(--smp-accent)") != std::string::npos,
+          "the listening-party controls are not aligned with Now Playing or the code does not use the accent");
     check(patched_ui.find("get_album_art_b64") != std::string::npos, "the player UI was not given the cover file fallback");
     check(patched_ui.find("url.indexOf(\"data:\") !== 0 && !artUrlMatchesAlbum(album, url)") != std::string::npos, "a cover already read as bytes is not painted on every tile");
     check(patched_ui.find("incomingRev <= (UI.pointerBusyRev || 0)") != std::string::npos && patched_ui.find("UI.pointerRevFloor") != std::string::npos, "a late page reply can still overwrite the page that was just opened");
