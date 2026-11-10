@@ -3399,6 +3399,10 @@ std::string patched_player_audio_engine_text() {
         "\t\tthis.doomnetStreamLimiter = null;\n"
         "\t\tthis.doomnetStreamDestination = null;\n"
         "\t\tthis.doomnetStreamActive = false;\n"
+        "\t\tthis.doomnetRemoteSource = null;\n"
+        "\t\tthis.doomnetRemoteGain = null;\n"
+        "\t\tthis.doomnetRemoteLimiter = null;\n"
+        "\t\tthis.doomnetRemoteActive = false;\n"
         "\t}\n";
     const size_t fields_at = engine.find(old_fields);
     if (fields_at != std::string::npos) {
@@ -3413,6 +3417,7 @@ std::string patched_player_audio_engine_text() {
         "\t// masterGain. The default dry/wet -> masterGain connections stay\n"
         "\t// untouched, and no stream node exists until this method is called.\n"
         "\tAudioEngine.prototype.doomnetAttachStream = function () {\n"
+        "\t\tthis.doomnetDetachRemoteStream();\n"
         "\t\tif (this.doomnetStreamActive && this.doomnetStreamDestination) {\n"
         "\t\t\treturn this.doomnetStreamDestination.stream;\n"
         "\t\t}\n"
@@ -3451,6 +3456,44 @@ std::string patched_player_audio_engine_text() {
         "\t\tthis.doomnetStreamDestination = null;\n"
         "\t\tthis.doomnetStreamActive = false;\n"
         "\t};\n"
+        "\n"
+        "\t// A listener receives the host's complete mix. Only this gain follows\n"
+        "\t// the listener's volume slider; host ducking, width, EQ, and reverb\n"
+        "\t// are already in the incoming MediaStream.\n"
+        "\tAudioEngine.prototype.doomnetAttachRemoteStream = function (stream) {\n"
+        "\t\tif (!stream || !stream.getAudioTracks || !stream.getAudioTracks().length) {\n"
+        "\t\t\tthrow new Error(\"StreamTunes did not receive an audio track\");\n"
+        "\t\t}\n"
+        "\t\tthis.doomnetDetachStream();\n"
+        "\t\tthis.doomnetDetachRemoteStream();\n"
+        "\t\tvar ctx = this.ensureContext();\n"
+        "\t\tvar source = ctx.createMediaStreamSource(stream);\n"
+        "\t\tvar gain = ctx.createGain();\n"
+        "\t\tgain.gain.value = this.volumeToGain(this.volume);\n"
+        "\t\tvar limiter = ctx.createDynamicsCompressor();\n"
+        "\t\tlimiter.threshold.value = TRUE_PEAK_CEILING_DB - 0.5;\n"
+        "\t\tlimiter.knee.value = 0;\n"
+        "\t\tlimiter.ratio.value = 20;\n"
+        "\t\tlimiter.attack.value = 0.001;\n"
+        "\t\tlimiter.release.value = 0.1;\n"
+        "\t\tsource.connect(gain);\n"
+        "\t\tgain.connect(limiter);\n"
+        "\t\tlimiter.connect(ctx.destination);\n"
+        "\t\tthis.doomnetRemoteSource = source;\n"
+        "\t\tthis.doomnetRemoteGain = gain;\n"
+        "\t\tthis.doomnetRemoteLimiter = limiter;\n"
+        "\t\tthis.doomnetRemoteActive = true;\n"
+        "\t};\n"
+        "\n"
+        "\tAudioEngine.prototype.doomnetDetachRemoteStream = function () {\n"
+        "\t\ttry { if (this.doomnetRemoteSource) this.doomnetRemoteSource.disconnect(); } catch (e) {}\n"
+        "\t\ttry { if (this.doomnetRemoteGain) this.doomnetRemoteGain.disconnect(); } catch (e) {}\n"
+        "\t\ttry { if (this.doomnetRemoteLimiter) this.doomnetRemoteLimiter.disconnect(); } catch (e) {}\n"
+        "\t\tthis.doomnetRemoteSource = null;\n"
+        "\t\tthis.doomnetRemoteGain = null;\n"
+        "\t\tthis.doomnetRemoteLimiter = null;\n"
+        "\t\tthis.doomnetRemoteActive = false;\n"
+        "\t};\n"
         "\n";
     const size_t dispose_at = engine.find(dispose_anchor);
     if (dispose_at != std::string::npos) {
@@ -3465,12 +3508,37 @@ std::string patched_player_audio_engine_text() {
     const std::string new_dispose =
         "\tAudioEngine.prototype.dispose = function () {\n"
         "\t\tthis.doomnetDetachStream();\n"
+        "\t\tthis.doomnetDetachRemoteStream();\n"
         "\t\tthis.beginCommand();\n";
     const size_t dispose_body_at = engine.find(old_dispose);
     if (dispose_body_at != std::string::npos) {
         engine.replace(dispose_body_at, old_dispose.size(), new_dispose);
     } else {
         log_event(L"warn", L"stream", L"The player engine dispose body changed, so StreamTunes output cleanup was not attached.");
+    }
+
+    const std::string old_volume =
+        "\tAudioEngine.prototype.setVolumeSilent = function (value) {\n"
+        "\t\tthis.volume = clamp(value, 0, 1);\n"
+        "\t\tif (this.masterGain) {\n"
+        "\t\t\tthis.masterGain.gain.value = this.volumeToGain(this.volume);\n"
+        "\t\t}\n"
+        "\t};\n";
+    const std::string new_volume =
+        "\tAudioEngine.prototype.setVolumeSilent = function (value) {\n"
+        "\t\tthis.volume = clamp(value, 0, 1);\n"
+        "\t\tif (this.masterGain) {\n"
+        "\t\t\tthis.masterGain.gain.value = this.volumeToGain(this.volume);\n"
+        "\t\t}\n"
+        "\t\tif (this.doomnetRemoteGain) {\n"
+        "\t\t\tthis.doomnetRemoteGain.gain.value = this.volumeToGain(this.volume);\n"
+        "\t\t}\n"
+        "\t};\n";
+    const size_t volume_at = engine.find(old_volume);
+    if (volume_at != std::string::npos) {
+        engine.replace(volume_at, old_volume.size(), new_volume);
+    } else {
+        log_event(L"warn", L"stream", L"The player engine volume method changed, so listener volume was not attached to the StreamTunes receive path.");
     }
     return engine;
 }

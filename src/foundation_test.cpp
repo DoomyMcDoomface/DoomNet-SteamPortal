@@ -771,8 +771,13 @@ void test_skin_page() {
           "the StreamTunes destination is created before a host session attaches it");
     check(patched_engine.find("this.dryGain.disconnect(limiter)") != std::string::npos &&
               patched_engine.find("this.wetGain.disconnect(limiter)") != std::string::npos &&
-              patched_engine.find("this.doomnetDetachStream();\n\t\tthis.beginCommand();") != std::string::npos,
+              patched_engine.find("this.doomnetDetachStream();\n\t\tthis.doomnetDetachRemoteStream();\n\t\tthis.beginCommand();") != std::string::npos,
           "ending ownership does not detach the StreamTunes output");
+    check(patched_engine.find("AudioEngine.prototype.doomnetAttachRemoteStream") != std::string::npos &&
+              patched_engine.find("ctx.createMediaStreamSource(stream)") != std::string::npos &&
+              patched_engine.find("this.doomnetRemoteGain.gain.value = this.volumeToGain(this.volume)") != std::string::npos &&
+              patched_engine.find("AudioEngine.prototype.doomnetDetachRemoteStream") != std::string::npos,
+          "the listener has no detachable receive graph with personal volume");
     check(store_player.find("doomnetAttachStream") != std::string::npos, "the store player still receives the unpatched audio engine");
     check(patched_ui.find("doomnetMountPartySlot") != std::string::npos &&
               patched_ui.find("Start Listening Party") != std::string::npos &&
