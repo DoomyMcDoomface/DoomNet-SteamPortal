@@ -3,3 +3,4 @@
 .vs/
 CMakeUserPresets.json
 *.user
+node_modules/
