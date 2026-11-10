@@ -337,6 +337,18 @@ std::string patched_player_ui_text() {
         }
     }
     ui.swap(normalized);
+    const std::string old_overlay_dock = "\t\t\"z-index:2147483000}\",\n\t].join(\"\");";
+    const std::string new_overlay_dock =
+        "\t\t\"z-index:2147483000}\",\n"
+        "\t\t\"html.smp-ctx-overlay .smp-launcher,html.smp-ctx-overlay .smp-overlay-widget{bottom:4.5vh !important}\",\n"
+        "\t\t\"html.smp-ctx-overlay .smp-panel{bottom:calc(4.5vh + 64px) !important}\",\n"
+        "\t].join(\"\");";
+    const size_t overlay_dock_at = ui.find(old_overlay_dock);
+    if (overlay_dock_at != std::string::npos) {
+        ui.replace(overlay_dock_at, old_overlay_dock.size(), new_overlay_dock);
+    } else {
+        log_event(L"warn", L"inject", L"The player did not include the overlay fallback layout, so the mini player stays at the bottom edge until the stylesheet loads.");
+    }
     const std::string guard = "window !== window.top";
     const size_t guard_at = ui.find(guard);
     if (guard_at != std::string::npos) {
@@ -1354,6 +1366,17 @@ std::string patched_player_ui_text() {
         "\t\t\t\t});\n"
         "\t\t\t}\n"
         "\t\t\tUI.doomnetSlideNpBlock(wrap);\n"
+        "\t\t\tvar hang = 0;\n"
+        "\t\t\tif (!inline && eq && !wrap.classList.contains(\"doomnet-flanks-off\")) {\n"
+        "\t\t\t\tvar under = eq.querySelector(\".doomnet-eq-meter\");\n"
+        "\t\t\t\tvar underBox = under && under.getBoundingClientRect();\n"
+        "\t\t\t\tif (underBox && underBox.height > 8) {\n"
+        "\t\t\t\t\tvar pad = parseFloat(window.getComputedStyle(wrap).paddingBottom) || 0;\n"
+        "\t\t\t\t\tvar contentEdge = wrap.getBoundingClientRect().bottom - pad;\n"
+        "\t\t\t\t\thang = Math.ceil(underBox.bottom + 24 - contentEdge);\n"
+        "\t\t\t\t}\n"
+        "\t\t\t}\n"
+        "\t\t\twrap.style.paddingBottom = hang > 36 ? hang + \"px\" : \"\";\n"
         "\t\t},\n"
         "\n"
         "\t\tdoomnetMetersWanted: function () {\n"
@@ -3264,9 +3287,16 @@ std::string patched_player_css_text() {
         ".smp-eq-fader-label{margin-top:6px;color:var(--smp-text-dim);font-size:9px;font-weight:400;letter-spacing:0.02em;}\n"
         ".smp-settings-slider{flex:0 1 240px;width:240px;max-width:240px;accent-color:var(--smp-accent);}\n"
         ".smp-settings-readout{width:36ch;min-width:36ch;max-width:36ch;flex:0 0 36ch;overflow:hidden;white-space:nowrap;text-align:left;}\n"
-        "html.smp-ctx-overlay .smp-setting-block .smp-settings-row{flex-wrap:nowrap;}\n"
-        "html.smp-ctx-overlay .smp-setting-block .smp-settings-label{width:auto;flex:0 0 auto;}\n"
+        "html.smp-ctx-overlay .smp-setting-block{padding:12px 0;}\n"
+        "html.smp-ctx-overlay .smp-feature-block{margin-top:0;padding:12px 0;}\n"
+        "html.smp-ctx-overlay .smp-settings-row,html.smp-ctx-overlay .smp-setting-block .smp-settings-row{display:flex;align-items:center;flex-wrap:nowrap;gap:12px;margin:0;}\n"
+        "html.smp-ctx-overlay .smp-settings-label,html.smp-ctx-overlay .smp-setting-block .smp-settings-label{flex:0 0 168px;width:168px;min-width:168px;}\n"
+        "html.smp-ctx-overlay .smp-select{flex:1 1 auto;width:auto;min-width:0;max-width:none;box-sizing:border-box;}\n"
         "html.smp-ctx-overlay .smp-settings-slider{flex:1 1 auto;width:auto;min-width:0;max-width:none;}\n"
+        "html.smp-ctx-overlay .smp-settings-readout{flex:0 0 7ch;width:7ch;min-width:7ch;max-width:7ch;}\n"
+        "html.smp-ctx-overlay .smp-hint{margin-top:6px;}\n"
+        "html.smp-ctx-overlay .smp-launcher,html.smp-ctx-overlay .smp-overlay-widget{bottom:4.5vh !important;}\n"
+        "html.smp-ctx-overlay .smp-panel{bottom:calc(4.5vh + 64px) !important;}\n"
         ".smp-select{flex:0 1 360px;width:360px;max-width:min(360px,100%);}\n"
         ".doomnet-playlist-menu{position:fixed;z-index:2147483000;min-width:180px;max-width:280px;max-height:240px;overflow:auto;margin:0;padding:4px;background:#1b1c1f;border:1px solid rgba(255,255,255,0.14);border-radius:6px;box-shadow:0 10px 28px rgba(0,0,0,0.55);}\n"
         ".doomnet-playlist-menu-item,.doomnet-playlist-menu-empty{display:block;width:100%;box-sizing:border-box;margin:0;padding:7px 10px;border:0;border-radius:4px;background:transparent;box-shadow:none;color:#d9dadd;font:inherit;font-size:13px;line-height:1.3;text-align:left;cursor:pointer;}\n"
