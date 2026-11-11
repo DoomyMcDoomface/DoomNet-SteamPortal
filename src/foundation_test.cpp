@@ -163,6 +163,10 @@ void test_streamtunes_identity() {
               script.find("wss://relay.example/streamtunes") != std::string::npos,
           "StreamTunes exposed the account login or omitted its guarded page config");
     check(doomnet::streamtunes_config_script(steam, L"", error).empty() && error.empty(), "an empty relay URL still enabled StreamTunes");
+    check(doomnet::streamtunes_relay_for_launch(L"D:\\Documents\\Repos\\DoomNet-SteamPortal\\build\\Release\\DoomNet.exe", L"").empty(), "a source tree was given the test party address");
+    const std::wstring tester_relay = doomnet::streamtunes_relay_for_launch(L"C:\\Users\\Tester\\AppData\\Local\\DoomNet\\DoomNet.exe", L"");
+    check(tester_relay.rfind(L"wss://", 0) == 0 && tester_relay.find(L"/streamtunes") != std::wstring::npos, "a tester install was not given the party address");
+    check(doomnet::streamtunes_relay_for_launch(L"C:\\Users\\Tester\\AppData\\Local\\DoomNet\\DoomNet.exe", L"wss://relay.example/streamtunes") == L"wss://relay.example/streamtunes", "a saved party address was replaced");
 }
 
 void test_update_gate() {

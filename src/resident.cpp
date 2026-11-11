@@ -250,6 +250,8 @@ void run_attach(HANDLE stop, const std::wstring& root, const std::wstring& steam
     const std::wstring backend = root + L"\\player\\backend";
     wchar_t running_exe[MAX_PATH] = {};
     GetModuleFileNameW(nullptr, running_exe, MAX_PATH);
+    Config party = config;
+    party.streamtunes_relay = streamtunes_relay_for_launch(running_exe, config.streamtunes_relay);
     if (installed_host_leaves_when_steam_exits(running_exe)) {
         log_event(L"info", L"startup", L"Attaching to Steam the user started. This installed copy reads the player and skin in its data folder and checks GitHub for updates. It leaves when Steam exits so the next launch starts the program on disk.");
     } else {
@@ -260,7 +262,7 @@ void run_attach(HANDLE stop, const std::wstring& root, const std::wstring& steam
     } else if (!main_lua_present(backend)) {
         log_event(L"error", L"lua", (L"'" + backend + L"\\main.lua' is not there, so the player was not started.").c_str());
     } else {
-        prepare_installed_files(steam, config);
+        prepare_installed_files(steam, party);
     }
 
     ArtThumbs thumbs;
@@ -304,7 +306,7 @@ void run_attach(HANDLE stop, const std::wstring& root, const std::wstring& steam
                 log_event(L"warn", L"lua", L"The Lua host did not finish loading within 120 seconds. The player may answer late.");
             }
             if (!steam.empty()) {
-                prepare_installed_files(steam, config);
+                prepare_installed_files(steam, party);
                 log_event(L"info", L"payload", L"Wrote version 1.16.0 into steamui after the player started. That page has the scan and the listening-party button. It is not a copy of 1.15.0.");
             }
         }

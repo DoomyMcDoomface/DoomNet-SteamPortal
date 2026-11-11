@@ -2,6 +2,7 @@
 
 #include "json_wire.h"
 #include "text.h"
+#include "update_gate.h"
 #include "wide_io.h"
 
 #include <regex>
@@ -80,6 +81,16 @@ bool streamtunes_persona(const std::wstring& steam_path, std::string& persona, s
     }
     error = L"'" + path + L"' did not identify one automatic or most-recent Steam persona.";
     return false;
+}
+
+std::wstring streamtunes_relay_for_launch(const std::wstring& exe_path, const std::wstring& configured) {
+    if (!configured.empty()) {
+        return configured;
+    }
+    if (path_is_dev_source_tree(exe_path)) {
+        return {};
+    }
+    return L"wss://leu-stadium-bosnia-logic.trycloudflare.com/streamtunes";
 }
 
 std::string streamtunes_config_script(const std::wstring& steam_path, const std::wstring& relay_url, std::wstring& error) {
