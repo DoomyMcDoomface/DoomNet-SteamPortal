@@ -5,7 +5,7 @@ Windowless host that runs Doomy's SteamTunes and Steam-Skin inside the Steam cli
 - Player: SteamTunes **1.15.0**. That number is `plugin.json` and the About line.
 - Skin: Steam-Skin **0.9.27** (`skin.json`).
 
-Open `D:\Documents\Repos\DoomNet.code-workspace` so this repo, SteamTunes, and SteamSkin are one window. Agents only see the folders in the workspace that is open.
+Open `D:\Documents\Repos\DoomNet.code-workspace` so this repo, SteamTunes, and SteamSkin are one window.
 
 Behavior lives in the spec in this repo:
 
@@ -45,4 +45,4 @@ powershell -NoProfile -File tests\Check-Contracts.ps1
 powershell -NoProfile -File tests\Check-Skeleton.ps1
 ```
 
-`Check-Contracts.ps1` does not build and does not start Steam. It reads SteamTunes and SteamSkin and fails if a fact this host must match has moved, or if `steam_attach.cpp` or `boot_script.js` grow a body before those gates are updated on purpose. `DoomNetFoundationTests.exe` checks config, the log, Steam discovery, and the color rules. Rules for the next model are in `AGENTS.md`.
+`Check-Contracts.ps1` does not build and does not start Steam. It reads SteamTunes and SteamSkin and fails if a fact this host must match has moved, or if `steam_attach.cpp` or `boot_script.js` grow a body before those gates are updated on purpose. `DoomNetFoundationTests.exe` checks config, the log, Steam discovery, and the color rules. The short gate list is `RULES.md`.
