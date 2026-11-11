@@ -697,14 +697,19 @@ bool copy_tree_filtered(const std::wstring& from, const std::wstring& to, bool s
 bool replace_program(const std::wstring& staged, const std::wstring& dest, std::wstring& error) {
     const std::wstring previous = dest + L".previous";
     DeleteFileW(previous.c_str());
-    if (GetFileAttributesW(dest.c_str()) != INVALID_FILE_ATTRIBUTES && !MoveFileExW(dest.c_str(), previous.c_str(), MOVEFILE_REPLACE_EXISTING)) {
-        error = L"Could not move '" + dest + L"' aside. " + windows_error_text(GetLastError());
-        return false;
+    std::wstring aside = previous;
+    if (GetFileAttributesW(dest.c_str()) != INVALID_FILE_ATTRIBUTES && !MoveFileExW(dest.c_str(), aside.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+        // The usual previous name can be held by an older copy. A running program can still be renamed.
+        aside = dest + L".previous-" + std::to_wstring(GetTickCount64());
+        if (!MoveFileExW(dest.c_str(), aside.c_str(), 0)) {
+            error = L"Could not move '" + dest + L"' aside. " + windows_error_text(GetLastError());
+            return false;
+        }
     }
     if (!CopyFileW(staged.c_str(), dest.c_str(), FALSE)) {
         error = L"Could not copy '" + staged + L"' to '" + dest + L"'. " + windows_error_text(GetLastError());
-        if (GetFileAttributesW(previous.c_str()) != INVALID_FILE_ATTRIBUTES) {
-            MoveFileExW(previous.c_str(), dest.c_str(), MOVEFILE_REPLACE_EXISTING);
+        if (GetFileAttributesW(aside.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            MoveFileExW(aside.c_str(), dest.c_str(), MOVEFILE_REPLACE_EXISTING);
         }
         return false;
     }

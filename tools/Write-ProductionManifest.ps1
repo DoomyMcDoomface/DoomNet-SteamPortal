@@ -4,7 +4,8 @@ param(
     [Parameter(Mandatory = $true)][string]$DoomNetExe,
     [Parameter(Mandatory = $true)][string]$PluginJson,
     [Parameter(Mandatory = $true)][string]$SkinJson,
-    [Parameter(Mandatory = $true)][string]$OutFile
+    [Parameter(Mandatory = $true)][string]$OutFile,
+    [string]$DoomNetVersion = "1.16.0"
 )
 
 $ErrorActionPreference = "Stop"
@@ -116,17 +117,18 @@ $skinFiles = Select-PayloadFiles $skinRoot ""
 $skinZip = Join-Path $outDir "steamskin.zip"
 Write-StoreZip $skinZip $skinFiles
 
-function Piece([string]$ZipPath, [string]$FileName) {
+function Piece([string]$ZipPath, [string]$FileName, [string]$Version) {
     $hash = Hash-File $ZipPath
+    if ([string]::IsNullOrWhiteSpace($Version)) { $Version = $hash.Substring(0, 12) }
     return [ordered]@{
-        version = $hash.Substring(0, 12)
+        version = $Version
         url = "https://github.com/DoomyMcDoomface/DoomNet-SteamPortal/releases/download/production/$FileName"
         sha256 = $hash
     }
 }
 
 $manifest = [ordered]@{
-    doomnet = Piece $doomnetZip "doomnet.zip"
+    doomnet = Piece $doomnetZip "doomnet.zip" $DoomNetVersion
     steamtunes = Piece $playerZip "steamtunes.zip"
     steamskin = Piece $skinZip "steamskin.zip"
 }
