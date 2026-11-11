@@ -1120,7 +1120,7 @@ void test_skin_page() {
     check(boot.find("stableSince") != std::string::npos, "boot script no longer waits for the library grid to finish its first pass");
     check(boot.find("wantsPlayer") != std::string::npos, "boot script no longer inserts the player on the Steam window");
     check(boot.find("win.__doomnetStore = window.__doomnetStore") != std::string::npos, "the Steam window does not receive the Store record, so an installed skin is shown as not installed");
-    check(boot.find("20261111-version-1.16.0") != std::string::npos && boot.find("20261027-version-1.15.0") == std::string::npos, "Steam still loads the player as version 1.15.0");
+    check(boot.find("20261111-version-1.16.0-scan") != std::string::npos && boot.find("20261027-version-1.15.0") == std::string::npos, "Steam still loads the player as version 1.15.0");
     check(boot.find("win.__doomnetPartyConfig = window.__doomnetPartyConfig") != std::string::npos && boot.find("win.DoomNetStreamTunes = window.DoomNetStreamTunes") != std::string::npos, "the Steam window does not receive StreamTunes, so the listening-party button never appears");
     check(boot.find("doomnet-steamtunes-tab") != std::string::npos, "boot script does not add a SteamTunes tab");
     check(boot.find("row.appendChild(tab)") != std::string::npos, "the SteamTunes tab is not placed after the account name");
@@ -1221,9 +1221,12 @@ void test_skin_page() {
         const std::string kept = doomnet::patched_player_module("main", stock_sync);
         const size_t stop_copy = kept.find("The original 1.15.0 files were not copied over it.");
         const size_t copy_again = kept.find("local destDir");
-        check(stop_copy != std::string::npos && copy_again != std::string::npos && stop_copy < copy_again, "the player still copies version 1.15.0 over the 1.16.0 page");
+        const size_t guarded = kept.find("if true then");
+        const size_t returned = kept.find("return");
+        const size_t closed = kept.find("end");
+        check(stop_copy != std::string::npos && guarded != std::string::npos && returned != std::string::npos && closed != std::string::npos && copy_again != std::string::npos && stop_copy < guarded && guarded < returned && returned < closed && closed < copy_again, "the player still copies version 1.15.0 over the 1.16.0 page");
     }
-    check(doomnet::patched_player_bootstrap_text().find("var ASSET_REV = \"20261111-version-1.16.0\"") != std::string::npos && doomnet::patched_player_bootstrap_text().find("20261027-version-1.15.0") == std::string::npos, "the player files are still cached as version 1.15.0");
+    check(doomnet::patched_player_bootstrap_text().find("var ASSET_REV = \"20261111-version-1.16.0-scan\"") != std::string::npos && doomnet::patched_player_bootstrap_text().find("20261027-version-1.15.0") == std::string::npos, "the player files are still cached as version 1.15.0");
     check(patched_ui.find("settingsTabList.push({ key: \"store\", label: \"Store\" })") != std::string::npos &&
               patched_ui.find("UI.doomnetRenderStore(view)") != std::string::npos &&
               patched_ui.find("doomnet_install_app") != std::string::npos &&
@@ -1325,6 +1328,24 @@ void test_skin_page() {
     check(patched_ui.find("callServer(\"get_music_folders\").then(function (folders)") != std::string::npos && patched_ui.find("UI.applySettingsToEngine();") != std::string::npos, "the overlay waits on the full queue before it shows the saved settings");
     check(patched_ui.find("cacheReady.then(function (cached)") != std::string::npos, "the overlay stays on Loading library until the server answers");
     check(patched_ui.find("text: \"Add to playlist\"") != std::string::npos && patched_ui.find("callServer(\"playlist_add_track\"") != std::string::npos && patched_ui.find("return playlist && !playlist.sourcePath;") != std::string::npos && patched_ui.find("callServer(\"playlist_remove_track\"") != std::string::npos && patched_ui.find("mode === \"playlistTracks\"") != std::string::npos && patched_ui.find("document.body.appendChild(menu)") != std::string::npos && patched_ui.find("rect.top - menuRect.height") != std::string::npos && patched_ui.find("role: \"menuitem\"") != std::string::npos && patched_ui.find("placed.top") != std::string::npos, "a song cannot be added to a playlist you created, and the playlist list does not open as a menu on the button");
+    {
+        const std::string album_button = "var addAlbumPlaylistBtn";
+        size_t album_buttons = 0;
+        for (size_t at = 0; (at = patched_ui.find(album_button, at)) != std::string::npos; at += album_button.size()) {
+            album_buttons += 1;
+        }
+        check(album_buttons == 1, "Add to playlist is added again on the album page every time Steam starts");
+        check(patched_ui.find("SCAN_MAX_RESUME_ATTEMPTS: 40") != std::string::npos && patched_ui.find("return resume(err, resumesLeft, pollBatch)") == std::string::npos && patched_ui.find("the scan stopped before the library was saved") != std::string::npos && patched_ui.find("return resume(err, resumesLeft, startOrPoll)") != std::string::npos, "a large library scan still gives up when one batch fails");
+        std::string repeated = patched_ui.substr(patched_ui.find(album_button));
+        const size_t block_end = repeated.find("actions.appendChild(addAlbumPlaylistBtn);\n");
+        check(block_end != std::string::npos, "the album Add to playlist button was not found");
+        if (block_end != std::string::npos) {
+            const std::string block = repeated.substr(0, block_end + std::string("actions.appendChild(addAlbumPlaylistBtn);\n").size());
+            std::string four = block + block + block + block;
+            doomnet::keep_one_repeated_block(four, block);
+            check(four == block, "four album Add to playlist buttons were not folded back to one");
+        }
+    }
     check(patched_ui.find("doomnetConfirmPlaylist") != std::string::npos && patched_ui.find("The playlist file stays where it is.") != std::string::npos && patched_ui.find("dismiss_playlist") != std::string::npos && patched_ui.find("text: playlist.sourcePath ? \"Remove\" : \"Delete\"") != std::string::npos, "a playlist read from a file has no confirmation before it is removed from the player");
     check(patched_ui.find("doomnetMovePlaylistTrack") != std::string::npos && patched_ui.find("title: \"Move Up\"") != std::string::npos && patched_ui.find("title: \"Move Down\"") != std::string::npos && patched_ui.find("doomnetFinishPlaylistDrag") != std::string::npos && patched_ui.find("doomnetKeepPlaylistScroll") != std::string::npos, "a playlist you created cannot be reordered without jumping to the top");
     check(std::string(doomnet::player_compat_lua()).find("entry_path = entry_path or function(dir, entry)") != std::string::npos, "the library scan stops on the first folder, so albums saved without tags are never read");
@@ -1516,6 +1537,15 @@ void test_skin_page() {
         std::string doubled = call + "\n" + call + "\n" + call + "\n";
         doomnet::keep_one_repeated_block(doubled, call + "\n");
         check(doubled == call + "\n", "a repeated settings block is not folded back to one");
+        const std::string marker = "\t\tappendGlobalControlBlock: function (section) {\n";
+        std::string separated =
+            "doomnetRenderStore: function (view) {\n\treturn;\n},\n" +
+            marker + "\t\treturn;\n\t},\n" +
+            "doomnetRenderStore: function (view) {\n\ttext: \"Check for Updates\"\n},\n" +
+            marker + "\t\treturn;\n\t},\n";
+        doomnet::keep_one_repeated_block(separated, marker);
+        const size_t kept_control = separated.find(marker);
+        check(separated.find("Check for Updates") != std::string::npos && kept_control != std::string::npos && separated.find(marker, kept_control + marker.size()) == std::string::npos, "removing a repeated Global Control block also removes Check for Updates");
     }
     check(doomnet::patched_player_css_text().find("#doomnet-steamtunes-host .smp-seek{flex:0 1 360px;width:360px;max-width:360px;}") != std::string::npos, "the transport seek bar still stretches across the window");
 }

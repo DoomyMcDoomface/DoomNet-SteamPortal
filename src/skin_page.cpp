@@ -9,6 +9,8 @@
 
 #include <cstring>
 #include <regex>
+#include <utility>
+#include <vector>
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -112,17 +114,70 @@ size_t find_ci(const std::string& text, const char* needle) {
 
 }  // namespace
 
+static size_t repeated_block_length(const std::string& text, size_t at, const std::string& marker) {
+    if (marker.size() < 2 || marker[marker.size() - 2] != '{' || marker.back() != '\n') {
+        return marker.size();
+    }
+    const size_t open = at + marker.size() - 2;
+    int depth = 0;
+    bool in_string = false;
+    char quote = 0;
+    for (size_t i = open; i < text.size(); ++i) {
+        const char ch = text[i];
+        if (in_string) {
+            if (ch == '\\' && i + 1 < text.size()) {
+                i += 1;
+                continue;
+            }
+            if (ch == quote) {
+                in_string = false;
+            }
+            continue;
+        }
+        if (ch == '"' || ch == '\'' || ch == '`') {
+            in_string = true;
+            quote = ch;
+            continue;
+        }
+        if (ch == '{') {
+            depth += 1;
+        } else if (ch == '}') {
+            depth -= 1;
+            if (depth == 0) {
+                size_t end = i + 1;
+                if (end < text.size() && text[end] == ',') {
+                    end += 1;
+                }
+                if (end < text.size() && text[end] == '\n') {
+                    end += 1;
+                }
+                return end - at;
+            }
+        }
+    }
+    return 0;
+}
+
 void keep_one_repeated_block(std::string& text, const std::string& marker) {
     if (marker.empty()) {
         return;
     }
-    size_t at = text.find(marker);
-    while (at != std::string::npos) {
-        const size_t next = text.find(marker, at + marker.size());
-        if (next == std::string::npos) {
-            return;
+    std::vector<std::pair<size_t, size_t>> spans;
+    size_t at = 0;
+    while ((at = text.find(marker, at)) != std::string::npos) {
+        const size_t length = repeated_block_length(text, at, marker);
+        if (length == 0) {
+            at += marker.size();
+            continue;
         }
-        text.erase(at, next - at);
+        spans.push_back({at, length});
+        at += length;
+    }
+    if (spans.size() < 2) {
+        return;
+    }
+    for (size_t i = spans.size() - 1; i-- > 0;) {
+        text.erase(spans[i].first, spans[i].second);
     }
 }
 
@@ -437,10 +492,10 @@ std::string patched_player_bootstrap_text() {
         return {};
     }
     const std::string old_rev = "var ASSET_REV = \"20261027-version-1.15.0\"";
-    const std::string new_rev = "var ASSET_REV = \"20261111-version-1.16.0\"";
+    const std::string new_rev = "var ASSET_REV = \"20261111-version-1.16.0-scan\"";
     const size_t at = text.find(old_rev);
     if (at == std::string::npos) {
-        if (text.find("20261111-version-1.16.0") == std::string::npos) {
+        if (text.find("20261111-version-1.16.0-scan") == std::string::npos) {
             log_event(L"warn", L"inject", L"The player loader still uses version 1.15.0, so Steam can keep showing the old page.");
         }
     } else {
@@ -759,7 +814,10 @@ std::string patched_player_ui_text() {
         "\t\t\t\tactions.appendChild(setCoverBtn);\n"
         "\t\t\t}\n";
     const size_t drill_cover_at = ui.find(old_drill_cover);
-    if (drill_cover_at != std::string::npos) {
+    const bool cover_already_wrapped = drill_cover_at != std::string::npos && drill_cover_at >= 80 && ui.substr(drill_cover_at - 80, 80).find("smp-ctx-overlay") != std::string::npos;
+    if (cover_already_wrapped) {
+        // The button is already inside the overlay check. Wrapping it again nests another copy of that check on every start.
+    } else if (drill_cover_at != std::string::npos) {
         ui.replace(drill_cover_at, old_drill_cover.size(), new_drill_cover);
     } else {
         log_event(L"warn", L"inject", L"The player UI did not contain the album page Set Cover button, so the mini player can still change covers.");
@@ -2651,12 +2709,16 @@ std::string patched_player_ui_text() {
         "\t\t\t\tUI.doomnetOpenPlaylistMenu(addAlbumPlaylistBtn, ids);\n"
         "\t\t\t});\n"
         "\t\t\tactions.appendChild(addAlbumPlaylistBtn);\n";
-    const size_t album_queue_at = ui.find(old_album_queue);
-    if (album_queue_at != std::string::npos) {
+    const std::string album_playlist_button = new_album_queue.substr(old_album_queue.size());
+    const size_t album_queue_at = ui.find("var addAlbumPlaylistBtn") == std::string::npos ? ui.find(old_album_queue) : std::string::npos;
+    if (ui.find("var addAlbumPlaylistBtn") != std::string::npos) {
+        // The queue line stays in the page after the button is added, so a later start would add another button.
+    } else if (album_queue_at != std::string::npos) {
         ui.replace(album_queue_at, old_album_queue.size(), new_album_queue);
     } else {
         log_event(L"warn", L"inject", L"The player UI did not add Add to playlist on an album, so the album's songs cannot be saved together.");
     }
+    keep_one_repeated_block(ui, album_playlist_button);
     const std::string old_playlist_name = "var name = el(\"span\", \"smp-playlist-name\", { text: (playlist.name || \"Untitled\") + \" (\" + trackCount + \")\" });";
     const std::string new_playlist_name =
         "var name = el(\"button\", \"smp-playlist-name\", { type: \"button\", text: (playlist.name || \"Untitled\") + \" (\" + trackCount + \")\" });\n"
@@ -3910,6 +3972,54 @@ std::string patched_player_ui_text() {
     if (tag_field_at != std::string::npos) {
         ui.replace(tag_field_at, old_tag_field.size(), new_tag_field);
     }
+    const std::string old_resume_attempts = "SCAN_MAX_RESUME_ATTEMPTS: 8,";
+    const std::string new_resume_attempts = "SCAN_MAX_RESUME_ATTEMPTS: 40,";
+    const size_t resume_attempts_at = ui.find(old_resume_attempts);
+    if (resume_attempts_at != std::string::npos) {
+        ui.replace(resume_attempts_at, old_resume_attempts.size(), new_resume_attempts);
+    } else if (ui.find(new_resume_attempts) == std::string::npos) {
+        log_event(L"warn", L"inject", L"A large library scan still gives up after 8 failed batches, so the rest of the files are left unread.");
+    }
+    const std::string old_scan_mark = "startInfo = startInfo || {};\n";
+    const std::string new_scan_mark =
+        "startInfo = startInfo || {};\n"
+        "\t\t\t\t\tif ((startInfo.pendingCount || 0) > 0 || (startInfo.totalFiles || 0) > 0) {\n"
+        "\t\t\t\t\t\tUI._scanStillOpen = true;\n"
+        "\t\t\t\t\t}\n";
+    const size_t scan_mark_at = ui.find(old_scan_mark);
+    if (scan_mark_at != std::string::npos) {
+        ui.replace(scan_mark_at, old_scan_mark.size(), new_scan_mark);
+    }
+    const std::string old_batch_resume = "return resume(err, resumesLeft, pollBatch);";
+    const std::string new_batch_resume = "return resume(err, resumesLeft, startOrPoll);";
+    if (ui.find(old_batch_resume) == std::string::npos) {
+        if (ui.find("function pollBatch") != std::string::npos && ui.find(new_batch_resume) == std::string::npos) {
+            log_event(L"warn", L"inject", L"A failed scan batch continues a dead scan, so a large library can stop before every file is read.");
+        }
+    } else {
+        for (size_t at = 0; (at = ui.find(old_batch_resume, at)) != std::string::npos; at += new_batch_resume.size()) {
+            ui.replace(at, old_batch_resume.size(), new_batch_resume);
+        }
+    }
+    const std::string old_scan_done =
+        "if (batchInfo.done) {\n"
+        "\t\t\t\t\t\treportEvent(\n";
+    const std::string new_scan_done =
+        "if ((batchInfo.pendingCount || 0) > 0 || (batchInfo.remaining || 0) > 0 || (batchInfo.totalFiles || 0) > 0) {\n"
+        "\t\t\t\t\t\tUI._scanStillOpen = true;\n"
+        "\t\t\t\t\t}\n"
+        "\t\t\t\t\tif (batchInfo.done) {\n"
+        "\t\t\t\t\t\tif (UI._scanStillOpen && !(batchInfo.totalFiles > 0) && !(batchInfo.remaining > 0) && resumesLeft > 0) {\n"
+        "\t\t\t\t\t\t\treturn resume(new Error(\"the scan stopped before the library was saved\"), resumesLeft, startOrPoll);\n"
+        "\t\t\t\t\t\t}\n"
+        "\t\t\t\t\t\tUI._scanStillOpen = false;\n"
+        "\t\t\t\t\t\treportEvent(\n";
+    const size_t scan_done_at = ui.find(old_scan_done);
+    if (scan_done_at != std::string::npos) {
+        ui.replace(scan_done_at, old_scan_done.size(), new_scan_done);
+    } else if (ui.find("the scan stopped before the library was saved") == std::string::npos && ui.find("function pollBatch") != std::string::npos) {
+        log_event(L"warn", L"inject", L"A scan that dies still looks finished, so a large library can stop before every file is read.");
+    }
     const std::string old_bar =
         "pct = Math.round((progress.processed / progress.pending) * 100);";
     const std::string new_bar =
@@ -3939,6 +4049,39 @@ std::string patched_player_ui_text() {
     keep_one_repeated_block(ui, "\t\tfollowWheelVolume: function (delta) {\n");
     keep_one_repeated_block(ui, "\t\t\t\tif (progress.processed > 0 && pct < 1) pct = 1;\n");
     repair_party_buttons(ui);
+    const std::string store_hint = "page.appendChild(el(\"div\", \"doomnet-store-hint\", { text: \"Apps install beside the player. The player's saved color stays as it is.\" }));\n";
+    const std::string store_button =
+        "page.appendChild(el(\"div\", \"doomnet-store-hint\", { text: \"Apps install beside the player. The player's saved color stays as it is.\" }));\n"
+        "\t\t\tvar update = el(\"button\", \"smp-btn doomnet-store-update\", { type: \"button\", text: \"Check for Updates\" });\n"
+        "\t\t\tupdate.addEventListener(\"click\", function () {\n"
+        "\t\t\t\tif (update.disabled) {\n"
+        "\t\t\t\t\treturn;\n"
+        "\t\t\t\t}\n"
+        "\t\t\t\tvar call = window.Millennium && window.Millennium.callServerMethod;\n"
+        "\t\t\t\tif (typeof call !== \"function\") {\n"
+        "\t\t\t\t\tUI.showToast(\"Updates could not be checked because the page is not connected to DoomNet.\", 8000);\n"
+        "\t\t\t\t\treturn;\n"
+        "\t\t\t\t}\n"
+        "\t\t\t\tupdate.disabled = true;\n"
+        "\t\t\t\tcall(\"SteamMusicPlayer\", \"doomnet_check_updates\", []).then(function (message) {\n"
+        "\t\t\t\t\tupdate.disabled = false;\n"
+        "\t\t\t\t\tUI.showToast(String(message || \"Checked for updates.\"), 8000);\n"
+        "\t\t\t\t}, function (error) {\n"
+        "\t\t\t\t\tupdate.disabled = false;\n"
+        "\t\t\t\t\tUI.showToast(String((error && error.message) || error || \"Updates could not be checked.\"), 8000);\n"
+        "\t\t\t\t});\n"
+        "\t\t\t});\n"
+        "\t\t\tpage.appendChild(update);\n";
+    for (size_t store_at = 0; (store_at = ui.find(store_hint, store_at)) != std::string::npos;) {
+        const size_t next_fn = ui.find("\t\t\tcatalog.forEach", store_at);
+        const size_t already = ui.find("Check for Updates", store_at);
+        if (already != std::string::npos && (next_fn == std::string::npos || already < next_fn)) {
+            store_at += store_hint.size();
+            continue;
+        }
+        ui.replace(store_at, store_hint.size(), store_button);
+        store_at += store_button.size();
+    }
     return ui;
 }
 

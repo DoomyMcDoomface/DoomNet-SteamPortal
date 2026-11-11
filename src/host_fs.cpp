@@ -1270,7 +1270,9 @@ std::string patched_player_module(const std::string& module, std::string source)
         const std::string new_sync =
             "local function sync_assets_to_steamui()\n"
             "\tlogger:info(\"[SteamMusicPlayer] Left the DoomNet 1.16.0 player in steamui. The original 1.15.0 files were not copied over it.\")\n"
-            "\treturn\n"
+            "\tif true then\n"
+            "\t\treturn\n"
+            "\tend\n"
             "\tlocal destDir = fs.join(steamui_dir(), INJECT_SUBDIR)\n";
         const size_t sync_at = source.find(old_sync);
         if (sync_at == std::string::npos) {
@@ -1753,6 +1755,38 @@ std::string patched_player_module(const std::string& module, std::string source)
         }
     } else {
         source.replace(head_at, old_head.size(), new_head);
+    }
+    const std::string old_list_finish =
+        "local function listing_can_finish(age)\n"
+        "\tif fs.exists(scan_done_path()) then\n";
+    const std::string new_list_finish =
+        "local function listing_can_finish(age)\n"
+        "\tif walkJob.active then\n"
+        "\t\treturn false\n"
+        "\tend\n"
+        "\tif fs.exists(scan_done_path()) then\n";
+    const size_t list_finish_at = source.find(old_list_finish);
+    if (list_finish_at == std::string::npos) {
+        if (source.find("function listing_can_finish") != std::string::npos && source.find("if walkJob.active then") == std::string::npos) {
+            log_event(L"warn", L"lua", L"A slow folder listing is treated as finished after 8 seconds, so a large library can be saved with files still unread.");
+        }
+    } else {
+        source.replace(list_finish_at, old_list_finish.size(), new_list_finish);
+    }
+    const std::string old_read_tags = "\t\tlocal tags = read_tags_safe(path)\n";
+    const std::string new_read_tags =
+        "\t\tlocal tagOk, tags = pcall(read_tags_safe, path)\n"
+        "\t\tif not tagOk or type(tags) ~= \"table\" then\n"
+        "\t\t\tlogger:warn(\"[SteamMusicPlayer] skipped unreadable file \" .. tostring(path))\n"
+        "\t\t\ttags = {}\n"
+        "\t\tend\n";
+    const size_t read_tags_at = source.find(old_read_tags);
+    if (read_tags_at == std::string::npos) {
+        if (source.find("read_tags_safe(path)") != std::string::npos) {
+            log_event(L"warn", L"lua", L"One unreadable song can still stop the scan, so the files after it are left unread.");
+        }
+    } else {
+        source.replace(read_tags_at, old_read_tags.size(), new_read_tags);
     }
     const std::string old_scan_count =
         "\t\tprocessed = processed,\n"
