@@ -166,6 +166,12 @@ int lua_begin_update_check(lua_State* L) {
     return 1;
 }
 
+int lua_update_notice(lua_State* L) {
+    const std::string utf8 = wide_to_utf8(current_update_notice());
+    lua_pushlstring(L, utf8.data(), utf8.size());
+    return 1;
+}
+
 int lua_update_check_result(lua_State* L) {
     std::wstring message;
     const std::string status = take_store_update_check(message);
@@ -281,6 +287,8 @@ struct StateThread::Impl {
         lua_setglobal(L, "doomnet_begin_update_check");
         lua_pushcfunction(L, lua_update_check_result);
         lua_setglobal(L, "doomnet_update_check_result");
+        lua_pushcfunction(L, lua_update_notice);
+        lua_setglobal(L, "doomnet_update_notice");
         lua_pushcfunction(L, lua_begin_folder_pick);
         lua_setglobal(L, "doomnet_begin_folder_pick");
         lua_pushcfunction(L, lua_folder_pick_result);

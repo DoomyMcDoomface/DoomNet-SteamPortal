@@ -61,6 +61,8 @@ std::wstring launch_payload_dir(const std::wstring& repo, const std::wstring& in
 // The player UI with the store cover fallback applied. The SteamTunes
 // file on disk is not changed.
 std::string patched_player_ui_text();
+// Rewrites an already-patched player page so Start Listening Party stays on the SteamTunes row.
+void repair_party_buttons(std::string& ui);
 // Drops earlier copies when the same block was written into the player page more than once.
 void keep_one_repeated_block(std::string& text, const std::string& marker);
 

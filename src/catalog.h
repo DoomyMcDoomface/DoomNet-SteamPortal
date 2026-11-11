@@ -48,6 +48,10 @@ struct UpdateCheckResult {
     std::wstring message;
 };
 
+// The sentence the SteamTunes page shows. Empty means there is nothing to say.
+void publish_update_notice(const std::wstring& message);
+std::wstring current_update_notice();
+
 // One sentence. Source trees and updates:false do not read a manifest.
 // `steam_folder` is where version.dll may be replaced once Steam has quit.
 UpdateCheckResult check_production_updates(const std::wstring& exe_path, const std::wstring& data_root, bool config_updates_enabled, const std::wstring& steam_folder = {});

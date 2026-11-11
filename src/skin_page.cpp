@@ -374,6 +374,62 @@ std::string skin_tags_for_document(const std::string& url) {
     return tags;
 }
 
+void repair_party_buttons(std::string& ui) {
+    const std::string old_slot =
+        "\t\tdoomnetMountPartySlot: function (row) {\n"
+        "\t\t\tvar service = UI.doomnetPartyService();\n"
+        "\t\t\tif (!row || !service || !window.__doomnetTabHost) {\n"
+        "\t\t\t\treturn;\n"
+        "\t\t\t}\n"
+        "\t\t\tUI.doomnetBindParty();\n"
+        "\t\t\tvar state = UI.doomnetPartySnapshot();\n";
+    const std::string new_slot =
+        "\t\tdoomnetMountPartySlot: function (row) {\n"
+        "\t\t\tvar host = window.__doomnetTabHost || document.getElementById(\"doomnet-steamtunes-host\");\n"
+        "\t\t\tif (!row || !host) {\n"
+        "\t\t\t\treturn;\n"
+        "\t\t\t}\n"
+        "\t\t\twindow.__doomnetTabHost = host;\n"
+        "\t\t\tif (UI.doomnetWatchUpdateNotice) {\n"
+        "\t\t\t\tUI.doomnetWatchUpdateNotice();\n"
+        "\t\t\t}\n"
+        "\t\t\tvar service = UI.doomnetPartyService();\n"
+        "\t\t\tif (service) {\n"
+        "\t\t\t\tUI.doomnetBindParty();\n"
+        "\t\t\t}\n"
+        "\t\t\tvar state = service ? UI.doomnetPartySnapshot() : { active: false };\n";
+    const std::string old_start = "\t\t\tif (!state.active) {\n\t\t\t\tbutton(\"Start Listening Party\", \"\", function () { UI.doomnetOpenParty(true); }, true);\n";
+    const std::string new_start =
+        "\t\t\tif (!service) {\n"
+        "\t\t\t\tbutton(\"Start Listening Party\", \"\", function () {\n"
+        "\t\t\t\t\tUI.showToast(\"Listening Party needs a relay address before it can start.\", 8000);\n"
+        "\t\t\t\t}, true);\n"
+        "\t\t\t} else if (!state.active) {\n"
+        "\t\t\t\tbutton(\"Start Listening Party\", \"\", function () { UI.doomnetOpenParty(true); }, true);\n";
+    for (size_t at = 0; (at = ui.find(old_slot, at)) != std::string::npos; at += new_slot.size()) {
+        ui.replace(at, old_slot.size(), new_slot);
+    }
+    for (size_t at = 0; (at = ui.find(old_start, at)) != std::string::npos; at += new_start.size()) {
+        ui.replace(at, old_start.size(), new_start);
+    }
+    const std::string old_place =
+        "\t\t\tif (slot.childElementCount) {\n"
+        "\t\t\t\trow.appendChild(slot);\n"
+        "\t\t\t}\n";
+    const std::string new_place =
+        "\t\t\tif (slot.childElementCount) {\n"
+        "\t\t\t\tvar size = row.querySelector(\".smp-art-size\");\n"
+        "\t\t\t\tif (size) {\n"
+        "\t\t\t\t\trow.insertBefore(slot, size);\n"
+        "\t\t\t\t} else {\n"
+        "\t\t\t\t\trow.appendChild(slot);\n"
+        "\t\t\t\t}\n"
+        "\t\t\t}\n";
+    for (size_t at = 0; (at = ui.find(old_place, at)) != std::string::npos; at += new_place.size()) {
+        ui.replace(at, old_place.size(), new_place);
+    }
+}
+
 std::string patched_player_ui_text() {
     const std::wstring dir = player_asset_dir();
     std::string ui = read_skin_text(dir, "steam-music-player.js");
@@ -3388,13 +3444,54 @@ std::string patched_player_ui_text() {
 			});
 			view.appendChild(page);
 		},
-		doomnetMountPartySlot: function (row) {
-			var service = UI.doomnetPartyService();
-			if (!row || !service || !window.__doomnetTabHost) {
+		doomnetWatchUpdateNotice: function () {
+			if (UI._doomnetUpdateWatch || !window.__doomnetTabHost) {
 				return;
 			}
-			UI.doomnetBindParty();
-			var state = UI.doomnetPartySnapshot();
+			UI._doomnetUpdateWatch = true;
+			var shown = "";
+			function tick() {
+				var call = window.Millennium && window.Millennium.callServerMethod;
+				if (typeof call !== "function") {
+					setTimeout(tick, 2000);
+					return;
+				}
+				call("SteamMusicPlayer", "doomnet_update_notice", []).then(function (message) {
+					message = String(message || "");
+					if (message && message !== shown) {
+						shown = message;
+						var host = window.__doomnetTabHost;
+						var bar = host && host.querySelector(".doomnet-update-notice");
+						if (host && !bar) {
+							bar = document.createElement("div");
+							bar.className = "doomnet-update-notice";
+							host.insertBefore(bar, host.firstChild);
+						}
+						if (bar) {
+							bar.textContent = message;
+						}
+						UI.showToast(message, 12000);
+					}
+					setTimeout(tick, 2000);
+				}, function () {
+					setTimeout(tick, 4000);
+				});
+			}
+			tick();
+		},
+
+		doomnetMountPartySlot: function (row) {
+			var host = window.__doomnetTabHost || document.getElementById("doomnet-steamtunes-host");
+			if (!row || !host) {
+				return;
+			}
+			window.__doomnetTabHost = host;
+			UI.doomnetWatchUpdateNotice();
+			var service = UI.doomnetPartyService();
+			if (service) {
+				UI.doomnetBindParty();
+			}
+			var state = service ? UI.doomnetPartySnapshot() : { active: false };
 			var slot = el("div", "doomnet-party-slot");
 			function button(text, className, click, enabled) {
 				var btn = el("button", "smp-subtab doomnet-party-button" + (className ? " " + className : ""), {
@@ -3409,7 +3506,11 @@ std::string patched_player_ui_text() {
 				}
 				slot.appendChild(btn);
 			}
-			if (!state.active) {
+			if (!service) {
+				button("Start Listening Party", "", function () {
+					UI.showToast("Listening Party needs a relay address before it can start.", 8000);
+				}, true);
+			} else if (!state.active) {
 				button("Start Listening Party", "", function () { UI.doomnetOpenParty(true); }, true);
 			} else if (state.role === "host") {
 				button("End Party", "is-danger", function () {
@@ -3420,7 +3521,12 @@ std::string patched_player_ui_text() {
 				button("Start Listening Party", "", function () {}, false);
 			}
 			if (slot.childElementCount) {
-				row.appendChild(slot);
+				var size = row.querySelector(".smp-art-size");
+				if (size) {
+					row.insertBefore(slot, size);
+				} else {
+					row.appendChild(slot);
+				}
 			}
 		},
 
@@ -3808,6 +3914,7 @@ std::string patched_player_ui_text() {
     keep_one_repeated_block(ui, "\t\t\tUI.appendGlobalControlBlock(section);\n");
     keep_one_repeated_block(ui, "\t\tfollowWheelVolume: function (delta) {\n");
     keep_one_repeated_block(ui, "\t\t\t\tif (progress.processed > 0 && pct < 1) pct = 1;\n");
+    repair_party_buttons(ui);
     return ui;
 }
 
@@ -4116,8 +4223,11 @@ std::string patched_player_css_text() {
         ".smp-settings-slider{flex:0 1 240px;width:240px;max-width:240px;accent-color:var(--smp-accent);}\n"
         ".smp-settings-readout{width:36ch;min-width:36ch;max-width:36ch;flex:0 0 36ch;overflow:hidden;white-space:nowrap;text-align:left;}\n"
         ".smp-folder-path{flex:0 1 auto;min-width:0;}\n"
-        "#doomnet-steamtunes-host .doomnet-party-slot{display:flex;align-items:center;gap:4px;margin-left:auto;}\n"
-        "#doomnet-steamtunes-host .doomnet-party-button.is-danger{color:var(--smp-danger,#c0392b);}\n"
+        "#doomnet-steamtunes-host .doomnet-update-notice{position:absolute;left:16px;right:16px;top:12px;z-index:40;padding:10px 14px;background:#1b2838;border:1px solid var(--smp-accent,#66c0f4);color:#fff;font-size:14px;line-height:1.4;}\n"
+        "#doomnet-steamtunes-host .doomnet-party-slot{display:flex;align-items:center;gap:4px;margin-left:auto;margin-right:8px;}\n"
+        "#doomnet-steamtunes-host .doomnet-party-slot + .smp-art-size{margin-left:0;}\n"
+        "#doomnet-steamtunes-host .doomnet-party-button{background:var(--smp-accent,#e35d5d) !important;color:#fff !important;border:0;border-radius:3px;padding:4px 10px;}\n"
+        "#doomnet-steamtunes-host .doomnet-party-button.is-danger{background:var(--smp-danger,#c0392b) !important;color:#fff !important;}\n"
         "#doomnet-steamtunes-host .doomnet-party-button:disabled{opacity:0.4;cursor:default;}\n"
         "#doomnet-steamtunes-host .doomnet-party-page{display:flex;flex-direction:column;align-items:center;width:min(760px,100%);margin:32px auto 0;padding:24px;box-sizing:border-box;}\n"
         "#doomnet-steamtunes-host .doomnet-party-title{color:var(--smp-text);font-size:22px;font-weight:600;}\n"

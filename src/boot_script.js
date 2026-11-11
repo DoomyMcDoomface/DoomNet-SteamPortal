@@ -280,6 +280,12 @@
             if (window.__doomnetStore) {
                 win.__doomnetStore = window.__doomnetStore;
             }
+            if (window.__doomnetPartyConfig) {
+                win.__doomnetPartyConfig = window.__doomnetPartyConfig;
+            }
+            if (window.DoomNetStreamTunes) {
+                win.DoomNetStreamTunes = window.DoomNetStreamTunes;
+            }
         } catch (err) {
         }
     }

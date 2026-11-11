@@ -175,6 +175,11 @@ void test_update_gate() {
     const doomnet::UpdateCheckResult blocked = doomnet::check_production_updates(L"D:\\Documents\\Repos\\DoomNet-SteamPortal\\build\\Release\\DoomNet.exe", L"C:\\Users\\Tester\\AppData\\Local\\DoomNet", true);
     check(!blocked.restart_steam && blocked.message.find(L"nothing was downloaded") != std::wstring::npos, "a source tree was offered an update download");
     check(doomnet::updates_should_run(L"C:\\Users\\Tester\\AppData\\Local\\DoomNet\\DoomNet.exe", L"C:\\Users\\Tester\\AppData\\Local\\DoomNet", true), "a tester install with updates on was blocked");
+    doomnet::publish_update_notice(L"A new version is available. It's downloading now.");
+    check(doomnet::current_update_notice() == L"A new version is available. It's downloading now.", "the page is not told that a new version is downloading");
+    doomnet::publish_update_notice(L"The new version was downloaded. Quit Steam and open it again to use it.");
+    check(doomnet::current_update_notice().find(L"downloaded") != std::wstring::npos, "the page is not told when the download finishes");
+    doomnet::publish_update_notice(L"");
     check(doomnet::installed_host_leaves_when_steam_exits(L"C:\\Users\\Tester\\AppData\\Local\\DoomNet\\DoomNet.exe"), "an installed copy stays running after Steam exits, so the new program never loads");
     check(!doomnet::installed_host_leaves_when_steam_exits(L"D:\\Documents\\Repos\\DoomNet-SteamPortal\\build\\Release\\DoomNet.exe"), "a source tree leaves when Steam exits");
     const std::wstring payload_repo = temp_dir();
@@ -1115,6 +1120,7 @@ void test_skin_page() {
     check(boot.find("stableSince") != std::string::npos, "boot script no longer waits for the library grid to finish its first pass");
     check(boot.find("wantsPlayer") != std::string::npos, "boot script no longer inserts the player on the Steam window");
     check(boot.find("win.__doomnetStore = window.__doomnetStore") != std::string::npos, "the Steam window does not receive the Store record, so an installed skin is shown as not installed");
+    check(boot.find("win.__doomnetPartyConfig = window.__doomnetPartyConfig") != std::string::npos && boot.find("win.DoomNetStreamTunes = window.DoomNetStreamTunes") != std::string::npos, "the Steam window does not receive StreamTunes, so the listening-party button never appears");
     check(boot.find("doomnet-steamtunes-tab") != std::string::npos, "boot script does not add a SteamTunes tab");
     check(boot.find("row.appendChild(tab)") != std::string::npos, "the SteamTunes tab is not placed after the account name");
     check(boot.find("SetVisible") != std::string::npos && boot.find("bounds.w > 8 && bounds.h > 8") != std::string::npos && boot.find("on || !steamTunesOpen(doc)") != std::string::npos && boot.find("function steamContentBox") != std::string::npos && boot.find("Leave the extra views collapsed") != std::string::npos && boot.find("area >= browser.__doomnetBestArea") != std::string::npos, "opening SteamTunes does not hide the store page underneath");
@@ -1156,8 +1162,35 @@ void test_skin_page() {
               patched_ui.find("window.__doomnetParty") != std::string::npos &&
               patched_ui.find("window.__doomnetTabHost") != std::string::npos &&
               patched_ui.find("window.__doomnetPartyConfig") != std::string::npos &&
-              patched_ui.find("new Client({") != std::string::npos,
+              patched_ui.find("new Client({") != std::string::npos &&
+              patched_ui.find("Listening Party needs a relay address before it can start.") != std::string::npos &&
+              patched_ui.find("getElementById(\"doomnet-steamtunes-host\")") != std::string::npos &&
+              patched_ui.find("!service || !window.__doomnetTabHost") == std::string::npos,
           "the DoomNet library row has no guarded listening-party controls");
+    {
+        std::string already_patched =
+            "\t\tdoomnetMountPartySlot: function (row) {\n"
+            "\t\t\tvar service = UI.doomnetPartyService();\n"
+            "\t\t\tif (!row || !service || !window.__doomnetTabHost) {\n"
+            "\t\t\t\treturn;\n"
+            "\t\t\t}\n"
+            "\t\t\tUI.doomnetBindParty();\n"
+            "\t\t\tvar state = UI.doomnetPartySnapshot();\n"
+            "\t\t\tif (!state.active) {\n"
+            "\t\t\t\tbutton(\"Start Listening Party\", \"\", function () { UI.doomnetOpenParty(true); }, true);\n";
+        doomnet::repair_party_buttons(already_patched);
+        check(already_patched.find("!service || !window.__doomnetTabHost") == std::string::npos && already_patched.find("getElementById(\"doomnet-steamtunes-host\")") != std::string::npos && already_patched.find("!service) {") != std::string::npos, "an already patched player page still hides Start Listening Party");
+    }
+    {
+        const std::wstring installed = L"C:\\Users\\Pablo\\AppData\\Local\\DoomNet\\player\\backend\\assets\\frontend\\steam-music-player.js";
+        std::string page;
+        std::wstring read_error;
+        if (doomnet::read_entire_file(installed, page, read_error)) {
+            doomnet::repair_party_buttons(page);
+            check(page.find("!service || !window.__doomnetTabHost") == std::string::npos, "the installed player page still hides Start Listening Party");
+            check(doomnet::write_new_file(L"C:\\Users\\Pablo\\AppData\\Local\\Temp\\doomnet-player-fixed.js", page.data(), page.size(), read_error), "the repaired player page was not written");
+        }
+    }
     check(patched_ui.find("value = App.engine.doomnetAttachStream();") != std::string::npos &&
               patched_ui.find("App.engine.doomnetAttachRemoteStream(stream);") != std::string::npos &&
               patched_ui.find("App.engine.doomnetDetachRemoteStream();") != std::string::npos,
@@ -1187,7 +1220,10 @@ void test_skin_page() {
               patched_ui.find("SteamSkin is already installed") != std::string::npos &&
               patched_ui.find("The player's saved color stays as it is.") != std::string::npos &&
               patched_ui.find("Check for Updates") != std::string::npos &&
-              patched_ui.find("doomnet_check_updates") != std::string::npos,
+              patched_ui.find("doomnet_check_updates") != std::string::npos &&
+              patched_ui.find("doomnet_update_notice") != std::string::npos &&
+              patched_ui.find("doomnet-update-notice") != std::string::npos &&
+              doomnet::patched_player_css_text().find(".doomnet-update-notice{") != std::string::npos,
           "Settings has no DoomNet Store tab");
     check(patched_ui.find("pick_music_folder") != std::string::npos && patched_ui.find("and the folders inside it") != std::string::npos,
           "Add Folder still asks the page for a path, so the chosen music folder is never saved");
@@ -1212,7 +1248,9 @@ void test_skin_page() {
                   "a play still copies the song into steamui");
         }
     }
-    check(doomnet::patched_player_css_text().find(".doomnet-party-slot{display:flex;align-items:center;gap:4px;margin-left:auto;}") != std::string::npos &&
+    check(doomnet::patched_player_css_text().find(".doomnet-party-slot{display:flex;align-items:center;gap:4px;margin-left:auto;margin-right:8px;}") != std::string::npos &&
+              doomnet::patched_player_css_text().find(".doomnet-party-slot + .smp-art-size{margin-left:0;}") != std::string::npos &&
+              doomnet::patched_player_css_text().find(".doomnet-party-button{background:var(--smp-accent,#e35d5d)") != std::string::npos &&
               doomnet::patched_player_css_text().find(".doomnet-party-code{") != std::string::npos &&
               doomnet::patched_player_css_text().find("color:var(--smp-accent)") != std::string::npos,
           "the listening-party controls are not aligned with Now Playing or the code does not use the accent");

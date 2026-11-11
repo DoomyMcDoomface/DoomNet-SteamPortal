@@ -996,6 +996,7 @@ UpdateCheckResult check_production_updates(const std::wstring& exe_path, const s
         result.message = L"This copy is already up to date.";
         return result;
     }
+    publish_update_notice(L"A new version is available. It's downloading now.");
     std::wstring detail = L"A production update is ready.";
     if (plan.doomnet) {
         detail += L" DoomNet " + installed.doomnet + L" to " + manifest.doomnet.version + L".";
@@ -1032,13 +1033,38 @@ UpdateCheckResult check_production_updates(const std::wstring& exe_path, const s
         }
     }
     if (!replaced) {
-        result.message = L"An update was found, but it could not be downloaded. Nothing was replaced.";
+        result.message = L"A new version is available, but it could not be downloaded. Nothing was replaced.";
+        publish_update_notice(result.message);
         return result;
     }
     result.restart_steam = true;
+    publish_update_notice(missed ? L"Part of the new version was downloaded. Quit Steam and open it again to use it."
+                                 : L"The new version was downloaded. Quit Steam and open it again to use it.");
     result.message = missed ? L"Part of the update was downloaded. Steam is restarting so it can load."
                             : L"An update was downloaded. Steam is restarting so it can load.";
     return result;
+}
+
+namespace {
+
+std::mutex g_update_notice_mu;
+std::wstring g_update_notice;
+
+}  // namespace
+
+void publish_update_notice(const std::wstring& message) {
+    {
+        std::lock_guard<std::mutex> lock(g_update_notice_mu);
+        g_update_notice = message;
+    }
+    if (!message.empty()) {
+        log_event(L"info", L"installer", message.c_str());
+    }
+}
+
+std::wstring current_update_notice() {
+    std::lock_guard<std::mutex> lock(g_update_notice_mu);
+    return g_update_notice;
 }
 
 void note_production_update_gate(const std::wstring& exe_path, const std::wstring& data_root, bool config_updates_enabled, const std::wstring& steam_folder) {
@@ -1143,6 +1169,7 @@ std::string take_store_update_check(std::wstring& message) {
         g_update_check_busy = false;
     }
     if (restart) {
+        publish_update_notice(message.empty() ? L"An update was downloaded. Steam is restarting so it can load." : message);
         std::thread(restart_steam_after_update, steam).detach();
     }
     return "ready";
