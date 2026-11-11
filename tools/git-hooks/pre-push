@@ -1,0 +1,6 @@
+#!/bin/sh
+# A push of main or production replaces the tester zip on the production release.
+# If that upload fails, the push does not go out.
+repo=$(git rev-parse --show-toplevel) || exit 1
+refs=$(cat)
+exec powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$repo/tools/Publish-Remote.ps1" -Refs "$refs"

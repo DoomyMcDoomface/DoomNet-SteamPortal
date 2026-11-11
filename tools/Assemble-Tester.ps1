@@ -2,7 +2,12 @@
 $ErrorActionPreference = "Stop"
 $repo = Split-Path $PSScriptRoot -Parent
 $cmake = "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
-& $cmake --build (Join-Path $repo "build") --config Release --target DoomNet
+if (-not (Test-Path -LiteralPath $cmake)) {
+    $found = Get-Command cmake -ErrorAction SilentlyContinue
+    if (-not $found) { throw "cmake was not found, so the tester zip was not built." }
+    $cmake = $found.Source
+}
+& $cmake --build (Join-Path $repo "build") --config Release --target DoomNet doomnet_version
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 $fx = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319"
@@ -47,3 +52,4 @@ $zip = Join-Path $repo "dist\DoomNet.zip"
 if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
 Compress-Archive -Path (Join-Path $out "*") -DestinationPath $zip
 Write-Output "Wrote $zip"
+exit 0

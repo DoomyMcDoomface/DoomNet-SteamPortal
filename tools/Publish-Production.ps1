@@ -18,11 +18,27 @@ if (-not $Upload) {
     return
 }
 
-gh release upload production `
-    (Join-Path $out "production-manifest.json") `
-    (Join-Path $out "doomnet.zip") `
-    (Join-Path $out "steamtunes.zip") `
-    (Join-Path $out "steamskin.zip") `
-    --clobber --repo DoomyMcDoomface/DoomNet-SteamPortal
+$files = @(
+    (Join-Path $out "production-manifest.json"),
+    (Join-Path $out "doomnet.zip"),
+    (Join-Path $out "steamtunes.zip"),
+    (Join-Path $out "steamskin.zip")
+)
+$tester = Join-Path $repo "dist\DoomNet.zip"
+if (Test-Path -LiteralPath $tester) {
+    $setup = Join-Path $out "DoomNet-setup.zip"
+    Copy-Item -LiteralPath $tester -Destination $setup -Force
+    $files += $setup
+}
+$existing = @(gh release view production --repo DoomyMcDoomface/DoomNet-SteamPortal --json assets --jq ".assets[].name")
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+foreach ($file in $files) {
+    $name = Split-Path -Leaf $file
+    $flag = @()
+    if ($existing -contains $name) { $flag = @("--clobber") }
+    gh release upload production $file @flag --repo DoomyMcDoomface/DoomNet-SteamPortal
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    Write-Output "Uploaded $name"
+}
 Write-Output "Uploaded the production update."
+exit 0

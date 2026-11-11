@@ -1,33 +1,18 @@
 name: production manifest
 
-# main and dev do not publish. This file runs only for the production branch.
+# The tester zip is published by tools/Publish-Remote.ps1 before a push of
+# main or production. This workflow cannot see the private player and skin
+# repos, so it does not upload a zip and it does not run on push.
 on:
-  push:
-    branches:
-      - production
+  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  manifest:
+  note:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Write the production manifest
+      - name: The zip is published by the push hook
         shell: pwsh
-        run: |
-          $missing = @()
-          foreach ($path in @("build\Release\DoomNet.exe", "build\Release\version.dll", "payload\player\plugin.json", "payload\skin\skin.json")) {
-            if (-not (Test-Path -LiteralPath $path)) { $missing += $path }
-          }
-          if ($missing.Count -gt 0) {
-            Write-Output ("Production publish refused because these files are not in the tree: " + ($missing -join ", "))
-            exit 1
-          }
-          .\tools\Write-ProductionManifest.ps1 -DoomNetExe build\Release\DoomNet.exe -PluginJson payload\player\plugin.json -SkinJson payload\skin\skin.json -OutFile production-manifest.json
-      - name: Publish the manifest and payloads on the production release
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release upload production production-manifest.json doomnet.zip steamtunes.zip steamskin.zip --clobber
+        run: Write-Output "The tester zip is replaced by tools/Publish-Remote.ps1 when main or production is pushed."
