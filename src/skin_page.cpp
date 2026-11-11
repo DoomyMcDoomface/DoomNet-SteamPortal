@@ -492,10 +492,10 @@ std::string patched_player_bootstrap_text() {
         return {};
     }
     const std::string old_rev = "var ASSET_REV = \"20261027-version-1.15.0\"";
-    const std::string new_rev = "var ASSET_REV = \"20261111-version-1.16.0-scan\"";
+    const std::string new_rev = "var ASSET_REV = \"20261111-version-1.16.0-party-library\"";
     const size_t at = text.find(old_rev);
     if (at == std::string::npos) {
-        if (text.find("20261111-version-1.16.0-scan") == std::string::npos) {
+        if (text.find("20261111-version-1.16.0-party-library") == std::string::npos) {
             log_event(L"warn", L"inject", L"The player loader still uses version 1.15.0, so Steam can keep showing the old page.");
         }
     } else {
@@ -851,6 +851,41 @@ std::string patched_player_ui_text() {
         ui.replace(subtabs_end_at, old_subtabs_end.size(), new_subtabs_end);
     } else {
         log_event(L"warn", L"inject", L"The player UI did not build the Artist row, so its artwork and listening-party controls have nowhere to sit.");
+    }
+    const std::string old_library_tab_click =
+        "\t\t\t\tbtn.addEventListener(\"click\", function () {\n"
+        "\t\t\t\t\tif (!UI.libraryDrill && UI.libraryGroupBy === mode.key) {\n";
+    const std::string new_library_tab_click =
+        "\t\t\t\tbtn.addEventListener(\"click\", function () {\n"
+        "\t\t\t\t\tvar leavingPartyPage = UI.doomnetPartyPage;\n"
+        "\t\t\t\t\tif (leavingPartyPage) {\n"
+        "\t\t\t\t\t\tUI.doomnetPartyPage = false;\n"
+        "\t\t\t\t\t}\n"
+        "\t\t\t\t\tif (!leavingPartyPage && !UI.libraryDrill && UI.libraryGroupBy === mode.key) {\n";
+    const size_t library_tab_click_at = ui.find(old_library_tab_click);
+    if (library_tab_click_at != std::string::npos) {
+        ui.replace(library_tab_click_at, old_library_tab_click.size(), new_library_tab_click);
+    } else {
+        log_event(L"warn", L"inject", L"The player UI did not handle a library tab click, so a party page stays in front of the library.");
+    }
+    const std::string old_commit_search =
+        "\t\t\tUI.searchQuery = value;\n"
+        "\t\t\tUI.searchRenderPending = false;\n"
+        "\t\t\tUI.pendingBrowseScroll = 0;\n"
+        "\t\t\tUI.searchCommitRender = true;\n"
+        "\t\t\tUI.renderLibrary();\n";
+    const std::string new_commit_search =
+        "\t\t\tUI.searchQuery = value;\n"
+        "\t\t\tUI.doomnetPartyPage = false;\n"
+        "\t\t\tUI.searchRenderPending = false;\n"
+        "\t\t\tUI.pendingBrowseScroll = 0;\n"
+        "\t\t\tUI.searchCommitRender = true;\n"
+        "\t\t\tUI.renderLibrary();\n";
+    const size_t commit_search_at = ui.find(old_commit_search);
+    if (commit_search_at != std::string::npos) {
+        ui.replace(commit_search_at, old_commit_search.size(), new_commit_search);
+    } else {
+        log_event(L"warn", L"inject", L"The player UI did not commit a library search, so a party page stays in front of the search results.");
     }
 
     const std::string old_library_label =
@@ -3425,7 +3460,8 @@ std::string patched_player_ui_text() {
 					UI.libraryDrill = null;
 				}
 				UI._doomnetListening = listening;
-				if (listening || UI.doomnetPartyPage || (UI.root && UI.root.querySelector(".doomnet-party-slot"))) {
+				var partyOnScreen = UI.doomnetPartyPage || (listening && UI.libraryGroupBy === "nowplaying" && !UI.libraryDrill);
+				if (partyOnScreen) {
 					UI.safely("renderLibrary", UI.renderLibrary);
 				}
 			});
