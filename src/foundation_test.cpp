@@ -172,7 +172,19 @@ void test_update_gate() {
     check(!doomnet::path_is_dev_source_tree(L"C:\\Users\\Tester\\AppData\\Local\\DoomNet\\DoomNet.exe"), "a tester install path was treated as a source tree");
     check(!doomnet::updates_should_run(L"C:\\Users\\Tester\\AppData\\Local\\DoomNet\\DoomNet.exe", L"C:\\Users\\Tester\\AppData\\Local\\DoomNet", false), "updates ran while config kept them off");
     check(!doomnet::updates_should_run(L"D:\\Documents\\Repos\\DoomNet-SteamPortal\\build\\Release\\DoomNet.exe", L"C:\\Users\\Tester\\AppData\\Local\\DoomNet", true), "updates ran from the DoomNet source tree");
+    const doomnet::UpdateCheckResult blocked = doomnet::check_production_updates(L"D:\\Documents\\Repos\\DoomNet-SteamPortal\\build\\Release\\DoomNet.exe", L"C:\\Users\\Tester\\AppData\\Local\\DoomNet", true);
+    check(!blocked.restart_steam && blocked.message.find(L"nothing was downloaded") != std::wstring::npos, "a source tree was offered an update download");
     check(doomnet::updates_should_run(L"C:\\Users\\Tester\\AppData\\Local\\DoomNet\\DoomNet.exe", L"C:\\Users\\Tester\\AppData\\Local\\DoomNet", true), "a tester install with updates on was blocked");
+    check(doomnet::installed_host_leaves_when_steam_exits(L"C:\\Users\\Tester\\AppData\\Local\\DoomNet\\DoomNet.exe"), "an installed copy stays running after Steam exits, so the new program never loads");
+    check(!doomnet::installed_host_leaves_when_steam_exits(L"D:\\Documents\\Repos\\DoomNet-SteamPortal\\build\\Release\\DoomNet.exe"), "a source tree leaves when Steam exits");
+    const std::wstring payload_repo = temp_dir();
+    const std::wstring payload_installed = temp_dir();
+    std::wstring payload_error;
+    const char payload_marker[] = "{\"name\":\"marker\"}";
+    check(doomnet::write_new_file(payload_repo + L"\\skin.json", payload_marker, sizeof(payload_marker) - 1, payload_error), "payload repo marker");
+    check(doomnet::write_new_file(payload_installed + L"\\skin.json", payload_marker, sizeof(payload_marker) - 1, payload_error), "payload installed marker");
+    check(doomnet::launch_payload_dir_for(L"C:\\Users\\Tester\\AppData\\Local\\DoomNet\\DoomNet.exe", L"C:\\Users\\Tester\\AppData\\Local\\DoomNet", payload_repo, payload_installed, L"skin.json") == payload_installed, "an installed copy read the local repo instead of the installed skin");
+    check(doomnet::launch_payload_dir_for(L"D:\\Documents\\Repos\\DoomNet-SteamPortal\\build\\Release\\DoomNet.exe", L"C:\\Users\\Tester\\AppData\\Local\\DoomNet", payload_repo, payload_installed, L"skin.json") == payload_repo, "a source tree did not read the local repo");
 
     const std::wstring dir = temp_dir();
     const std::wstring path = dir + L"\\versions.json";
@@ -1102,6 +1114,7 @@ void test_skin_page() {
     check(boot.find("__doomnetLibraryReady") != std::string::npos, "boot script no longer preloads the library grid");
     check(boot.find("stableSince") != std::string::npos, "boot script no longer waits for the library grid to finish its first pass");
     check(boot.find("wantsPlayer") != std::string::npos, "boot script no longer inserts the player on the Steam window");
+    check(boot.find("win.__doomnetStore = window.__doomnetStore") != std::string::npos, "the Steam window does not receive the Store record, so an installed skin is shown as not installed");
     check(boot.find("doomnet-steamtunes-tab") != std::string::npos, "boot script does not add a SteamTunes tab");
     check(boot.find("row.appendChild(tab)") != std::string::npos, "the SteamTunes tab is not placed after the account name");
     check(boot.find("SetVisible") != std::string::npos && boot.find("bounds.w > 8 && bounds.h > 8") != std::string::npos && boot.find("on || !steamTunesOpen(doc)") != std::string::npos && boot.find("function steamContentBox") != std::string::npos && boot.find("Leave the extra views collapsed") != std::string::npos && boot.find("area >= browser.__doomnetBestArea") != std::string::npos, "opening SteamTunes does not hide the store page underneath");
@@ -1172,7 +1185,9 @@ void test_skin_page() {
               patched_ui.find("app.id === \"steamskin\"") != std::string::npos &&
               patched_ui.find("button.disabled = true") != std::string::npos &&
               patched_ui.find("SteamSkin is already installed") != std::string::npos &&
-              patched_ui.find("The player's saved color stays as it is.") != std::string::npos,
+              patched_ui.find("The player's saved color stays as it is.") != std::string::npos &&
+              patched_ui.find("Check for Updates") != std::string::npos &&
+              patched_ui.find("doomnet_check_updates") != std::string::npos,
           "Settings has no DoomNet Store tab");
     check(patched_ui.find("pick_music_folder") != std::string::npos && patched_ui.find("and the folders inside it") != std::string::npos,
           "Add Folder still asks the page for a path, so the chosen music folder is never saved");
@@ -1183,7 +1198,7 @@ void test_skin_page() {
         check(library_read, "library.lua was not read");
         if (library_read) {
             const std::string patched = doomnet::patched_player_module("library", library_source);
-            check(patched.find("entry.is_directory") != std::string::npos && patched.find("and every folder inside it") != std::string::npos && patched.find("not entry.is_file") != std::string::npos,
+            check(patched.find("entry.is_directory") != std::string::npos && patched.find("and every folder inside it") != std::string::npos && patched.find("not entry.is_symlink") != std::string::npos && patched.find("not entry.is_file") == std::string::npos,
                   "the scan still does not walk folders inside the music folder");
         }
         std::string main_source;
@@ -1311,6 +1326,31 @@ void test_skin_page() {
         check(art_scan.find("tags.artPending") != std::string::npos && art_scan.find("local TAG_SWEEP_VERSION = 5") != std::string::npos, "a picture frame larger than the first read stays hidden on the next scan");
         const std::string head_read = "local MAX_HEAD_READ_BYTES = 8 * 1024 * 1024\n";
         check(doomnet::patched_player_module("library", head_read).find("local MAX_HEAD_READ_BYTES = 15 * 1024 * 1024") != std::string::npos, "the cover read is still 8 MB");
+        const std::string scan_count =
+            "\t\tprocessed = processed,\n"
+            "\t\tremaining = remaining,\n"
+            "\t\ttotalFiles = scanState.totalFiles or (listJob.results and #listJob.results) or 0,\n"
+            "\t\ttotalTracks = totalTracks,\n"
+            "\t\tpendingCount = remaining,\n"
+            "local function find_folder_art(trackPath, albumName)\n"
+            "\tif not is_library_root(dir) then\n"
+            "\t\tlocal okList, entries = pcall(fs.list, dir)\n"
+            "\t\tif okList and type(entries) == \"table\" then\n"
+            "\t\t\tlocal fallback = nil\n"
+            "\t\t\tfor _, entry in ipairs(entries) do\n"
+            "\t\t\t\tlocal name = tostring(entry):match(\"[^/\\\\]+$\") or tostring(entry)\n"
+            "\t\t\t\tif lower:match(\"^albumart.*_large%.jpe?g$\") or lower:match(\"^albumart.*large%.jpe?g$\") then\n"
+            "\t\t\t\t\treturn fs.join(dir, name)\n"
+            "\t\t\t\tend\n"
+            "\t\t\tif fallback then\n"
+            "\t\t\t\treturn fallback\n"
+            "\t\t\tend\n"
+            "\t\tend\n"
+            "\tend\n"
+            "\treturn nil\n"
+            "end\n";
+        const std::string scan_progress = doomnet::patched_player_module("library", scan_count);
+        check(scan_progress.find("pendingCount = #scanState.pending") != std::string::npos && scan_progress.find("processed = math.max(0, scanState.pendingIndex - 1)") != std::string::npos && scan_progress.find("folderArtByDir[dir]") != std::string::npos, "the scan count stays at 0 while more local files are found");
         const std::string id3_break =
             "\t\tif frameSize <= 0 or pos + headerLen + frameSize - 1 > tagEnd then\r\n"
             "\t\t\tbreak\r\n"
@@ -1418,6 +1458,15 @@ void test_skin_page() {
         check(doomnet::read_entire_file(L"D:\\Documents\\Repos\\DoomNet-SteamPortal\\src\\host_bus.h", bus_source, hook_error) && bus_source.find("reversed ? delta : current + delta") != std::string::npos, "rolling the volume wheel the other way keeps the unapplied steps from the previous direction");
     }
     check(doomnet::patched_player_ui_text().find("\"globalControl\"") != std::string::npos && doomnet::patched_player_ui_text().find("Global Control") != std::string::npos && doomnet::patched_player_ui_text().find("case \"volumeBump\":") != std::string::npos && doomnet::patched_player_ui_text().find("followWheelVolume") != std::string::npos && doomnet::patched_player_ui_text().find("requestAnimationFrame(step)") != std::string::npos && doomnet::patched_player_ui_text().find("!mediaKeysAllowed() || settingFlag(App.settings.globalControl, false)") != std::string::npos && doomnet::patched_player_ui_text().find("UI.commitSetting(\"globalControl\", false, false)") != std::string::npos && doomnet::patched_player_css_text().find(".smp-feature-block.is-locked{opacity:0.45;}") != std::string::npos, "media keys still require Steam to be in front, and a volume key still changes the Windows volume");
+    {
+        const std::string settings_page = doomnet::patched_player_ui_text();
+        const std::string call = "UI.appendGlobalControlBlock(section);";
+        const size_t first_call = settings_page.find(call);
+        check(first_call != std::string::npos && settings_page.find(call, first_call + call.size()) == std::string::npos, "Global Control is added more than once");
+        std::string doubled = call + "\n" + call + "\n" + call + "\n";
+        doomnet::keep_one_repeated_block(doubled, call + "\n");
+        check(doubled == call + "\n", "a repeated settings block is not folded back to one");
+    }
     check(doomnet::patched_player_css_text().find("#doomnet-steamtunes-host .smp-seek{flex:0 1 360px;width:360px;max-width:360px;}") != std::string::npos, "the transport seek bar still stretches across the window");
 }
 

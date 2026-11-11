@@ -106,6 +106,10 @@ bool updates_should_run(const std::wstring& exe_path, const std::wstring& data_r
     return true;
 }
 
+bool installed_host_leaves_when_steam_exits(const std::wstring& exe_path) {
+    return !exe_path.empty() && !path_is_dev_source_tree(exe_path);
+}
+
 bool load_installed_versions(const std::wstring& path, InstalledVersions& out, std::wstring& error) {
     error.clear();
     std::string text;

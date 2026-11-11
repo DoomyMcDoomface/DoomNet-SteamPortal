@@ -90,7 +90,8 @@ bool log_line(const wchar_t* level, const wchar_t* message) {
         return false;
     }
     const DWORD waited = WaitForSingleObject(mutex, kLogWaitMs);
-    if (waited != WAIT_OBJECT_0) {
+    // A host that was closed while writing leaves the mutex abandoned. The wait still owns it.
+    if (waited != WAIT_OBJECT_0 && waited != WAIT_ABANDONED) {
         CloseHandle(mutex);
         return false;
     }

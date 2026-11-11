@@ -154,6 +154,22 @@ bool entry_is_directory(const fsn::directory_entry& entry) {
     return windows_says_directory(entry.path().native());
 }
 
+// A junction or a symbolic link. std::filesystem does not report a Windows
+// junction as a symlink, and following one back into the music folder makes
+// the scan count the same files without end.
+bool path_is_folder_link(const fsn::path& path) {
+    WIN32_FIND_DATAW data{};
+    const HANDLE found = FindFirstFileW(path.c_str(), &data);
+    if (found == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+    FindClose(found);
+    if ((data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0) {
+        return false;
+    }
+    return data.dwReserved0 == IO_REPARSE_TAG_MOUNT_POINT || data.dwReserved0 == IO_REPARSE_TAG_SYMLINK;
+}
+
 // Boolean queries answer false for anything that is not a path. Millennium
 // raised for a non-string, which only turned a missing value into a stack trace.
 int boolean_query(lua_State* L, bool (*check)(const fsn::path&, std::error_code&)) {
@@ -191,7 +207,7 @@ int Lua_is_file(lua_State* L) {
     return boolean_query(L, [](const fsn::path& p, std::error_code& ec) { return fsn::is_regular_file(p, ec); });
 }
 int Lua_is_symlink(lua_State* L) {
-    return boolean_query(L, [](const fsn::path& p, std::error_code& ec) { return fsn::is_symlink(p, ec); });
+    return boolean_query(L, [](const fsn::path& p, std::error_code& ec) { return fsn::is_symlink(p, ec) || path_is_folder_link(p); });
 }
 int Lua_is_empty(lua_State* L) {
     return boolean_query(L, [](const fsn::path& p, std::error_code& ec) { return fsn::is_empty(p, ec); });
@@ -283,7 +299,8 @@ int Lua_list(lua_State* L) {
         const bool is_file = entry.is_regular_file(entry_ec);
         lua_pushboolean(L, is_file);
         lua_setfield(L, -2, "is_file");
-        lua_pushboolean(L, entry.is_symlink(entry_ec));
+        const bool link = entry.is_symlink(entry_ec) || (entry_is_directory(entry) && path_is_folder_link(entry.path()));
+        lua_pushboolean(L, link);
         lua_setfield(L, -2, "is_symlink");
         if (is_file) {
             std::error_code size_ec;
@@ -1721,6 +1738,102 @@ std::string patched_player_module(const std::string& module, std::string source)
     } else {
         source.replace(head_at, old_head.size(), new_head);
     }
+    const std::string old_scan_count =
+        "\t\tprocessed = processed,\n"
+        "\t\tremaining = remaining,\n"
+        "\t\ttotalFiles = scanState.totalFiles or (listJob.results and #listJob.results) or 0,\n"
+        "\t\ttotalTracks = totalTracks,\n"
+        "\t\tpendingCount = remaining,\n";
+    const std::string new_scan_count =
+        "\t\tprocessed = math.max(0, scanState.pendingIndex - 1),\n"
+        "\t\tremaining = remaining,\n"
+        "\t\ttotalFiles = scanState.totalFiles or (listJob.results and #listJob.results) or 0,\n"
+        "\t\ttotalTracks = totalTracks,\n"
+        "\t\tpendingCount = #scanState.pending,\n";
+    const size_t scan_count_at = source.find(old_scan_count);
+    if (scan_count_at == std::string::npos) {
+        if (source.find("pendingCount = remaining") != std::string::npos) {
+            log_event(L"warn", L"lua", L"The scan still reports files left instead of files read, so the count stays at 0 while more files are found.");
+        }
+    } else {
+        source.replace(scan_count_at, old_scan_count.size(), new_scan_count);
+    }
+    const std::string old_folder_art =
+        "local function find_folder_art(trackPath, albumName)\n";
+    const std::string new_folder_art =
+        "local folderArtByDir = {}\n"
+        "local function find_folder_art(trackPath, albumName)\n";
+    const size_t folder_art_at = source.find(old_folder_art);
+    if (folder_art_at == std::string::npos) {
+        if (source.find("function find_folder_art") != std::string::npos) {
+            log_event(L"warn", L"lua", L"Each song still lists its whole folder, so a large folder keeps the scan sitting on 0.");
+        }
+    } else {
+        source.replace(folder_art_at, old_folder_art.size(), new_folder_art);
+    }
+    const std::string old_folder_list =
+        "\tif not is_library_root(dir) then\n"
+        "\t\tlocal okList, entries = pcall(fs.list, dir)\n"
+        "\t\tif okList and type(entries) == \"table\" then\n"
+        "\t\t\tlocal fallback = nil\n"
+        "\t\t\tfor _, entry in ipairs(entries) do\n"
+        "\t\t\t\tlocal name = tostring(entry):match(\"[^/\\\\]+$\") or tostring(entry)\n";
+    const std::string new_folder_list =
+        "\tif not is_library_root(dir) then\n"
+        "\t\tlocal cached = folderArtByDir[dir]\n"
+        "\t\tif cached ~= nil then\n"
+        "\t\t\treturn cached ~= false and cached or nil\n"
+        "\t\tend\n"
+        "\t\tlocal okList, entries = pcall(fs.list, dir)\n"
+        "\t\tif okList and type(entries) == \"table\" then\n"
+        "\t\t\tlocal fallback = nil\n"
+        "\t\t\tfor _, entry in ipairs(entries) do\n"
+        "\t\t\t\tlocal raw = type(entry) == \"table\" and (entry.name or entry.path) or entry\n"
+        "\t\t\t\tlocal name = tostring(raw):match(\"[^/\\\\]+$\") or tostring(raw)\n";
+    const size_t folder_list_at = source.find(old_folder_list);
+    if (folder_list_at == std::string::npos) {
+        if (source.find("AlbumArt_") != std::string::npos || source.find("okList, entries") != std::string::npos) {
+            log_event(L"warn", L"lua", L"Each song still lists its whole folder, so a large folder keeps the scan sitting on 0.");
+        }
+    } else {
+        source.replace(folder_list_at, old_folder_list.size(), new_folder_list);
+    }
+    const std::string old_folder_hit =
+        "\t\t\t\tif lower:match(\"^albumart.*_large%.jpe?g$\") or lower:match(\"^albumart.*large%.jpe?g$\") then\n"
+        "\t\t\t\t\treturn fs.join(dir, name)\n"
+        "\t\t\t\tend\n";
+    const std::string new_folder_hit =
+        "\t\t\t\tif lower:match(\"^albumart.*_large%.jpe?g$\") or lower:match(\"^albumart.*large%.jpe?g$\") then\n"
+        "\t\t\t\t\tlocal found = fs.join(dir, name)\n"
+        "\t\t\t\t\tfolderArtByDir[dir] = found\n"
+        "\t\t\t\t\treturn found\n"
+        "\t\t\t\tend\n";
+    const size_t folder_hit_at = source.find(old_folder_hit);
+    if (folder_hit_at != std::string::npos) {
+        source.replace(folder_hit_at, old_folder_hit.size(), new_folder_hit);
+    }
+    const std::string old_folder_fallback =
+        "\t\t\tif fallback then\n"
+        "\t\t\t\treturn fallback\n"
+        "\t\t\tend\n"
+        "\t\tend\n"
+        "\tend\n"
+        "\treturn nil\n"
+        "end\n";
+    const std::string new_folder_fallback =
+        "\t\t\tif fallback then\n"
+        "\t\t\t\tfolderArtByDir[dir] = fallback\n"
+        "\t\t\t\treturn fallback\n"
+        "\t\t\tend\n"
+        "\t\tend\n"
+        "\t\tfolderArtByDir[dir] = false\n"
+        "\tend\n"
+        "\treturn nil\n"
+        "end\n";
+    const size_t folder_fallback_at = source.find(old_folder_fallback);
+    if (folder_fallback_at != std::string::npos) {
+        source.replace(folder_fallback_at, old_folder_fallback.size(), new_folder_fallback);
+    }
     const std::string old_playlist_note =
         "\tif key ~= \"\" then\n"
         "\t\tdiscoveredPlaylists[key] = path\n"
@@ -1865,8 +1978,20 @@ std::string patched_player_module(const std::string& module, std::string source)
         source.replace(found, old_gate.size(), new_gate);
         gate_from = found + new_gate.size();
     }
+    const std::string old_walk_ps =
+        "    foreach ($c in [System.IO.Directory]::EnumerateDirectories($dir)) { Walk $c }";
+    const std::string new_walk_ps =
+        "    foreach ($c in [System.IO.Directory]::EnumerateDirectories($dir)) { $attr = [System.IO.File]::GetAttributes($c); if (($attr -band [System.IO.FileAttributes]::ReparsePoint) -eq 0) { Walk $c } }";
+    const size_t walk_ps_at = source.find(old_walk_ps);
+    if (walk_ps_at == std::string::npos) {
+        if (source.find("function Walk([string]$dir)") != std::string::npos) {
+            log_event(L"warn", L"lua", L"The folder listing still follows a link back into the music folder, so the same songs can be counted without end.");
+        }
+    } else {
+        source.replace(walk_ps_at, old_walk_ps.size(), new_walk_ps);
+    }
     const std::string old_descend = "\t\t\t\t\t\t\tif (not dirOk) or isDir then\n";
-    const std::string new_descend = "\t\t\t\t\t\t\tif (type(entry) == \"table\" and not entry.is_file) or (not dirOk) or isDir then\n";
+    const std::string new_descend = "\t\t\t\t\t\t\tif dirOk and isDir and not (type(entry) == \"table\" and entry.is_symlink) then\n";
     if (source.find(old_descend) == std::string::npos) {
         log_event(L"warn", L"lua", L"The library walk still gives up on a child when the directory check returns false, so folders inside the music folder are skipped.");
     } else {
@@ -1884,7 +2009,7 @@ std::string patched_player_module(const std::string& module, std::string source)
         "\t\t\t\t\t\tif SUPPORTED_EXTENSIONS[file_extension(path)] then\n"
         "\t\t\t\t\t\t\tresults[#results + 1] = path\n";
     const std::string new_root_audio =
-        "\t\t\t\t\t\tif type(entry) == \"table\" and entry.is_directory then\n"
+        "\t\t\t\t\t\tif type(entry) == \"table\" and entry.is_directory and not entry.is_symlink then\n"
         "\t\t\t\t\t\t\tstack[#stack + 1] = path\n"
         "\t\t\t\t\t\telseif SUPPORTED_EXTENSIONS[file_extension(path)] then\n"
         "\t\t\t\t\t\t\tresults[#results + 1] = path\n";
@@ -1892,7 +2017,7 @@ std::string patched_player_module(const std::string& module, std::string source)
         "\t\t\t\t\t\tif SUPPORTED_EXTENSIONS[ext] then\n"
         "\t\t\t\t\t\t\tresults[#results + 1] = path\n";
     const std::string new_batch_audio =
-        "\t\t\t\t\t\tif type(entry) == \"table\" and entry.is_directory then\n"
+        "\t\t\t\t\t\tif type(entry) == \"table\" and entry.is_directory and not entry.is_symlink then\n"
         "\t\t\t\t\t\t\twalkJob.stack[#walkJob.stack + 1] = path\n"
         "\t\t\t\t\t\telseif SUPPORTED_EXTENSIONS[ext] then\n"
         "\t\t\t\t\t\t\tresults[#results + 1] = path\n";

@@ -54,9 +54,15 @@ std::string store_player_script();
 // repos win on this machine. An installed copy is used when the repo is absent.
 std::wstring first_existing_marker(const std::wstring& primary, const std::wstring& fallback, const wchar_t* file_name);
 
+// A source tree prefers `repo`. An installed copy returns `installed` and does not read the repo.
+std::wstring launch_payload_dir_for(const std::wstring& exe_path, const std::wstring& data_root, const std::wstring& repo, const std::wstring& installed, const wchar_t* file_name);
+std::wstring launch_payload_dir(const std::wstring& repo, const std::wstring& installed, const wchar_t* file_name);
+
 // The player UI with the store cover fallback applied. The SteamTunes
 // file on disk is not changed.
 std::string patched_player_ui_text();
+// Drops earlier copies when the same block was written into the player page more than once.
+void keep_one_repeated_block(std::string& text, const std::string& marker);
 
 // The player engine with a second output path that is created only while a
 // StreamTunes host session is active. The normal dry/wet -> masterGain path

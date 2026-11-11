@@ -4,6 +4,7 @@
 #include "log.h"
 #include "paths.h"
 #include "text.h"
+#include "update_gate.h"
 #include "wide_io.h"
 
 #include <cstring>
@@ -110,6 +111,20 @@ size_t find_ci(const std::string& text, const char* needle) {
 }
 
 }  // namespace
+
+void keep_one_repeated_block(std::string& text, const std::string& marker) {
+    if (marker.empty()) {
+        return;
+    }
+    size_t at = text.find(marker);
+    while (at != std::string::npos) {
+        const size_t next = text.find(marker, at + marker.size());
+        if (next == std::string::npos) {
+            return;
+        }
+        text.erase(at, next - at);
+    }
+}
 
 SkinFileCopy copy_skin_files(const std::wstring& skin_dir, const std::wstring& steam_dir) {
     SkinFileCopy result;
@@ -305,12 +320,28 @@ std::wstring first_existing_marker(const std::wstring& primary, const std::wstri
     return primary;
 }
 
+std::wstring launch_payload_dir_for(const std::wstring& exe_path, const std::wstring& data_root_path, const std::wstring& repo, const std::wstring& installed, const wchar_t* file_name) {
+    if (path_is_dev_source_tree(exe_path) || path_is_dev_source_tree(data_root_path)) {
+        return first_existing_marker(repo, installed, file_name);
+    }
+    return installed;
+}
+
+std::wstring launch_payload_dir(const std::wstring& repo, const std::wstring& installed, const wchar_t* file_name) {
+    wchar_t exe_path[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, exe_path, MAX_PATH);
+    std::wstring root;
+    std::wstring error;
+    data_root(root, error);
+    return launch_payload_dir_for(exe_path, root, repo, installed, file_name);
+}
+
 std::wstring player_asset_dir() {
     std::wstring root;
     std::wstring error;
     data_root(root, error);
     const std::wstring installed = root.empty() ? L"" : root + L"\\player\\backend\\assets\\frontend";
-    return first_existing_marker(L"D:\\Documents\\Repos\\SteamTunes\\backend\\assets\\frontend", installed, L"steam-music-player.js");
+    return launch_payload_dir(L"D:\\Documents\\Repos\\SteamTunes\\backend\\assets\\frontend", installed, L"steam-music-player.js");
 }
 
 std::string skin_tags_for_document(const std::string& url) {
@@ -3297,6 +3328,26 @@ std::string patched_player_ui_text() {
 			var page = el("div", "doomnet-store");
 			page.appendChild(el("div", "doomnet-store-title", { text: "Store" }));
 			page.appendChild(el("div", "doomnet-store-hint", { text: "Apps install beside the player. The player's saved color stays as it is." }));
+			var update = el("button", "smp-btn doomnet-store-update", { type: "button", text: "Check for Updates" });
+			update.addEventListener("click", function () {
+				if (update.disabled) {
+					return;
+				}
+				var call = window.Millennium && window.Millennium.callServerMethod;
+				if (typeof call !== "function") {
+					UI.showToast("Updates could not be checked because the page is not connected to DoomNet.", 8000);
+					return;
+				}
+				update.disabled = true;
+				call("SteamMusicPlayer", "doomnet_check_updates", []).then(function (message) {
+					update.disabled = false;
+					UI.showToast(String(message || "Checked for updates."), 8000);
+				}, function (error) {
+					update.disabled = false;
+					UI.showToast(String((error && error.message) || error || "Updates could not be checked."), 8000);
+				});
+			});
+			page.appendChild(update);
 			catalog.forEach(function (app) {
 				var row = el("div", "doomnet-store-row");
 				var names = el("div", "doomnet-store-namecol");
@@ -3706,6 +3757,40 @@ std::string patched_player_ui_text() {
     } else {
         ui.replace(emit_list_at, old_emit_list.size(), new_emit_list);
     }
+    const std::string old_tag_count =
+        "\t\t\t\tvar pending = (App.scanProgress && App.scanProgress.pending) || remaining;\n"
+        "\t\t\t\tvar processed = Math.max(0, pending - remaining);\n";
+    const std::string new_tag_count =
+        "\t\t\t\tvar pending = Math.max((App.scanProgress && App.scanProgress.pending) || 0, Number(progress.pendingCount) || 0, remaining);\n"
+        "\t\t\t\tvar already = (App.scanProgress && App.scanProgress.tagCount) || 0;\n"
+        "\t\t\t\tvar reported = Number(progress.processed) || 0;\n"
+        "\t\t\t\tvar processed = pending > remaining ? pending - remaining : 0;\n"
+        "\t\t\t\tif (processed === 0 && reported > 0 && reported <= 200) processed = already + reported;\n"
+        "\t\t\t\tif (reported > processed) processed = reported;\n"
+        "\t\t\t\tif (processed < already) processed = already;\n";
+    const size_t tag_count_at = ui.find(old_tag_count);
+    if (tag_count_at == std::string::npos) {
+        log_event(L"warn", L"inject", L"The scan progress still compares the first file count with the latest one, so the bar stays at 0 while more files are found.");
+    } else {
+        ui.replace(tag_count_at, old_tag_count.size(), new_tag_count);
+    }
+    const std::string old_tag_field = "\t\t\t\t\tprocessed: processed,\n";
+    const std::string new_tag_field = "\t\t\t\t\tprocessed: processed,\n\t\t\t\t\ttagCount: processed,\n";
+    const size_t tag_field_at = ui.find(old_tag_field);
+    if (tag_field_at != std::string::npos) {
+        ui.replace(tag_field_at, old_tag_field.size(), new_tag_field);
+    }
+    const std::string old_bar =
+        "pct = Math.round((progress.processed / progress.pending) * 100);";
+    const std::string new_bar =
+        "pct = Math.round((progress.processed / progress.pending) * 100);\n"
+        "\t\t\t\tif (progress.processed > 0 && pct < 1) pct = 1;";
+    const size_t bar_at = ui.find(old_bar);
+    if (bar_at == std::string::npos) {
+        log_event(L"warn", L"inject", L"The scan bar stays empty until one percent of the files are read.");
+    } else {
+        ui.replace(bar_at, old_bar.size(), new_bar);
+    }
     const std::string old_emit_start =
         "\t\t\t\t\t\ttotalFiles: startInfo.totalFiles || 0,\n"
         "\t\t\t\t\t\tremaining: startInfo.pendingCount || 0,\n";
@@ -3719,6 +3804,10 @@ std::string patched_player_ui_text() {
     } else {
         ui.replace(emit_start_at, old_emit_start.size(), new_emit_start);
     }
+    keep_one_repeated_block(ui, "\t\tappendGlobalControlBlock: function (section) {\n");
+    keep_one_repeated_block(ui, "\t\t\tUI.appendGlobalControlBlock(section);\n");
+    keep_one_repeated_block(ui, "\t\tfollowWheelVolume: function (delta) {\n");
+    keep_one_repeated_block(ui, "\t\t\t\tif (progress.processed > 0 && pct < 1) pct = 1;\n");
     return ui;
 }
 
@@ -4049,6 +4138,8 @@ std::string patched_player_css_text() {
         "#doomnet-steamtunes-host .doomnet-store-name{color:var(--smp-text);font-size:16px;}\n"
         "#doomnet-steamtunes-host .doomnet-store-version{margin-top:2px;color:var(--smp-text-dim);font-size:12px;}\n"
         "#doomnet-steamtunes-host .doomnet-store-install:disabled{opacity:0.4;cursor:default;}\n"
+        "#doomnet-steamtunes-host .doomnet-store-update{margin:0 0 16px;}\n"
+        "#doomnet-steamtunes-host .doomnet-store-update:disabled{opacity:0.4;cursor:default;}\n"
         "html.smp-ctx-overlay .smp-setting-block{padding:12px 0;}\n"
         "html.smp-ctx-overlay .smp-feature-block{margin-top:0;padding:12px 0;}\n"
         "html.smp-ctx-overlay .smp-settings-row,html.smp-ctx-overlay .smp-setting-block .smp-settings-row{display:flex;align-items:center;flex-wrap:nowrap;gap:12px;margin:0;}\n"

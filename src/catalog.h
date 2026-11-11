@@ -42,9 +42,25 @@ bool sha256_file(const std::wstring& path, std::string& hex, std::wstring& error
 // The caller must not replace an install after false.
 bool payload_hash_matches(const std::wstring& path, const std::string& expected_sha256, std::wstring& error);
 
+struct UpdateCheckResult {
+    // True when a payload was downloaded. The running program stays the old one until Steam starts again.
+    bool restart_steam = false;
+    std::wstring message;
+};
+
 // One sentence. Source trees and updates:false do not read a manifest.
 // `steam_folder` is where version.dll may be replaced once Steam has quit.
+UpdateCheckResult check_production_updates(const std::wstring& exe_path, const std::wstring& data_root, bool config_updates_enabled, const std::wstring& steam_folder = {});
+
 void note_production_update_gate(const std::wstring& exe_path, const std::wstring& data_root, bool config_updates_enabled, const std::wstring& steam_folder = {});
+
+// The Store button calls this from the state thread. The download runs on another thread.
+// False means a check is already running.
+bool begin_store_update_check(const std::wstring& data_root, const std::wstring& steam_path);
+
+// "wait" until the check finishes, then "ready" and `message`. A ready result that downloaded
+// a payload restarts Steam after this returns, so the page can show the message first.
+std::string take_store_update_check(std::wstring& message);
 
 // Replaces files staged by an earlier check. The player library and settings.json stay.
 // A missing pending list is not an error.

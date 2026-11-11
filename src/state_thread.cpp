@@ -6,6 +6,7 @@
 // Resume message arrives. A Lua error fails that one call; the state stays open.
 
 #include "anchors.h"
+#include "catalog.h"
 #include "folder_pick.h"
 #include "host_internal.h"
 #include "payload.h"
@@ -159,6 +160,37 @@ constexpr const char* kFolderPickSource =
     "  end\n"
     "end\n";
 
+int lua_begin_update_check(lua_State* L) {
+    const HostState& host = host_of(L);
+    lua_pushboolean(L, begin_store_update_check(host.config.install_path, host.config.steam_path) ? 1 : 0);
+    return 1;
+}
+
+int lua_update_check_result(lua_State* L) {
+    std::wstring message;
+    const std::string status = take_store_update_check(message);
+    lua_pushlstring(L, status.data(), status.size());
+    const std::string utf8 = wide_to_utf8(message);
+    lua_pushlstring(L, utf8.data(), utf8.size());
+    return 2;
+}
+
+// The Store button calls this. It parks between polls so the download stays off the state thread.
+constexpr const char* kUpdateCheckSource =
+    "function doomnet_check_updates()\n"
+    "  if not doomnet_begin_update_check() then\n"
+    "    return \"An update check is already running.\"\n"
+    "  end\n"
+    "  local utils = require(\"utils\")\n"
+    "  while true do\n"
+    "    local status, value = doomnet_update_check_result()\n"
+    "    if status ~= \"wait\" then\n"
+    "      return value or \"\"\n"
+    "    end\n"
+    "    utils.sleep(200)\n"
+    "  end\n"
+    "end\n";
+
 int lua_doomnet_install_app(lua_State* L) {
     size_t length = 0;
     const char* id = luaL_checklstring(L, 1, &length);
@@ -245,6 +277,10 @@ struct StateThread::Impl {
         install_host_searcher(L);
         lua_pushcfunction(L, lua_doomnet_install_app);
         lua_setglobal(L, "doomnet_install_app");
+        lua_pushcfunction(L, lua_begin_update_check);
+        lua_setglobal(L, "doomnet_begin_update_check");
+        lua_pushcfunction(L, lua_update_check_result);
+        lua_setglobal(L, "doomnet_update_check_result");
         lua_pushcfunction(L, lua_begin_folder_pick);
         lua_setglobal(L, "doomnet_begin_folder_pick");
         lua_pushcfunction(L, lua_folder_pick_result);
@@ -273,6 +309,12 @@ struct StateThread::Impl {
         if (luaL_dostring(L, kFolderPickSource) != LUA_OK) {
             const char* message = lua_tostring(L, -1);
             error = std::string("The music folder chooser failed to load: ") + (message != nullptr ? message : "?");
+            lua_pop(L, 1);
+            return false;
+        }
+        if (luaL_dostring(L, kUpdateCheckSource) != LUA_OK) {
+            const char* message = lua_tostring(L, -1);
+            error = std::string("The update check failed to load: ") + (message != nullptr ? message : "?");
             lua_pop(L, 1);
             return false;
         }

@@ -1,5 +1,6 @@
 #include "catalog.h"
 
+#include "config.h"
 #include "log.h"
 #include "paths.h"
 #include "text.h"
@@ -16,7 +17,9 @@
 #include <cctype>
 #include <cstdint>
 #include <cstring>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #pragma comment(lib, "bcrypt.lib")
@@ -950,10 +953,12 @@ bool apply_pending_updates(const std::wstring& data_root, const std::wstring& st
     return ok;
 }
 
-void note_production_update_gate(const std::wstring& exe_path, const std::wstring& data_root, bool config_updates_enabled, const std::wstring& steam_folder) {
+UpdateCheckResult check_production_updates(const std::wstring& exe_path, const std::wstring& data_root, bool config_updates_enabled, const std::wstring& steam_folder) {
+    UpdateCheckResult result;
     if (!updates_should_run(exe_path, data_root, config_updates_enabled)) {
         log_event(L"info", L"installer", L"Production updates are off because this process is a source tree or config.json has updates set to false. No manifest was read.");
-        return;
+        result.message = L"Updates are off for this copy, so nothing was downloaded.";
+        return result;
     }
     const wchar_t* published = L"https://github.com/DoomyMcDoomface/DoomNet-SteamPortal/releases/download/production/production-manifest.json";
     const std::wstring cached = data_root + L"\\updates\\production-manifest.json";
@@ -970,22 +975,26 @@ void note_production_update_gate(const std::wstring& exe_path, const std::wstrin
     }
     if (!have) {
         log_event(L"info", L"installer", (L"Production updates are on, and neither '" + std::wstring(published) + L"' nor '" + local + L"' could be read, so no payload was replaced.").c_str());
-        return;
+        result.message = L"The update list could not be read, so nothing was replaced.";
+        return result;
     }
     ReleaseManifest manifest;
     if (!parse_release_manifest(json, manifest, error)) {
         log_event(L"error", L"installer", error.c_str());
-        return;
+        result.message = error.empty() ? L"The update list could not be read, so nothing was replaced." : error;
+        return result;
     }
     InstalledVersions installed;
     if (!load_installed_versions(data_root + L"\\versions.json", installed, error)) {
         log_event(L"warn", L"installer", error.c_str());
-        return;
+        result.message = error.empty() ? L"The installed versions could not be read, so nothing was replaced." : error;
+        return result;
     }
     const UpdatePlan plan = updates_needed(manifest, installed);
     if (!plan.any()) {
         log_event(L"info", L"installer", L"The production manifest matches the installed versions. No payload was replaced.");
-        return;
+        result.message = L"This copy is already up to date.";
+        return result;
     }
     std::wstring detail = L"A production update is ready.";
     if (plan.doomnet) {
@@ -999,15 +1008,144 @@ void note_production_update_gate(const std::wstring& exe_path, const std::wstrin
     }
     detail += L" The payload is replaced only after its hash matches.";
     log_event(L"info", L"installer", detail.c_str());
-    if (plan.doomnet && !stage_piece(data_root, steam_folder, L"doomnet", manifest.doomnet)) {
+    bool replaced = false;
+    bool missed = false;
+    if (plan.doomnet) {
+        if (stage_piece(data_root, steam_folder, L"doomnet", manifest.doomnet)) {
+            replaced = true;
+        } else {
+            missed = true;
+        }
+    }
+    if (!missed && plan.steamtunes) {
+        if (stage_piece(data_root, steam_folder, L"steamtunes", manifest.steamtunes)) {
+            replaced = true;
+        } else {
+            missed = true;
+        }
+    }
+    if (!missed && plan.steamskin) {
+        if (stage_piece(data_root, steam_folder, L"steamskin", manifest.steamskin)) {
+            replaced = true;
+        } else {
+            missed = true;
+        }
+    }
+    if (!replaced) {
+        result.message = L"An update was found, but it could not be downloaded. Nothing was replaced.";
+        return result;
+    }
+    result.restart_steam = true;
+    result.message = missed ? L"Part of the update was downloaded. Steam is restarting so it can load."
+                            : L"An update was downloaded. Steam is restarting so it can load.";
+    return result;
+}
+
+void note_production_update_gate(const std::wstring& exe_path, const std::wstring& data_root, bool config_updates_enabled, const std::wstring& steam_folder) {
+    check_production_updates(exe_path, data_root, config_updates_enabled, steam_folder);
+}
+
+namespace {
+
+std::mutex g_update_check_mu;
+bool g_update_check_busy = false;
+bool g_update_check_done = false;
+bool g_update_check_restart = false;
+std::wstring g_update_check_message;
+std::wstring g_update_check_steam;
+
+std::wstring steam_exe_from(const std::wstring& steam_path) {
+    std::wstring steam_exe = steam_path;
+    if (steam_exe.size() < 9 || _wcsicmp(steam_exe.c_str() + (steam_exe.size() - 9), L"steam.exe") != 0) {
+        if (!steam_exe.empty() && steam_exe.back() != L'\\' && steam_exe.back() != L'/') {
+            steam_exe += L'\\';
+        }
+        steam_exe += L"steam.exe";
+    }
+    return steam_exe;
+}
+
+void restart_steam_after_update(std::wstring steam_path) {
+    // The page shows the message first. Quitting immediately would close it before the toast.
+    Sleep(2000);
+    const std::wstring steam_exe = steam_exe_from(steam_path);
+    std::wstring error;
+    if (steam_client_running(steam_exe)) {
+        if (!ask_steam_to_quit(steam_exe, error)) {
+            log_event(L"error", L"installer", error.empty() ? L"Steam was not restarted after the update." : error.c_str());
+            return;
+        }
+        for (int i = 0; i < 40; ++i) {
+            Sleep(500);
+            if (!steam_client_running(steam_exe)) {
+                break;
+            }
+        }
+    }
+    if (steam_client_running(steam_exe)) {
+        log_event(L"error", L"installer", (L"Steam was still running after the update, so '" + steam_exe + L"' was not started again.").c_str());
         return;
     }
-    if (plan.steamtunes && !stage_piece(data_root, steam_folder, L"steamtunes", manifest.steamtunes)) {
-        return;
+    if (!start_steam_visible(steam_exe, error)) {
+        log_event(L"error", L"installer", error.empty() ? (L"'" + steam_exe + L"' was not started after the update.").c_str() : error.c_str());
     }
-    if (plan.steamskin) {
-        stage_piece(data_root, steam_folder, L"steamskin", manifest.steamskin);
+}
+
+}  // namespace
+
+bool begin_store_update_check(const std::wstring& data_root, const std::wstring& steam_path) {
+    {
+        std::lock_guard<std::mutex> lock(g_update_check_mu);
+        if (g_update_check_busy) {
+            return false;
+        }
+        g_update_check_busy = true;
+        g_update_check_done = false;
+        g_update_check_restart = false;
+        g_update_check_message.clear();
+        g_update_check_steam = steam_path;
     }
+    std::thread([data_root, steam_path]() {
+        wchar_t exe_path[MAX_PATH] = {};
+        GetModuleFileNameW(nullptr, exe_path, MAX_PATH);
+        bool updates = false;
+        Config config;
+        std::wstring error;
+        if (load_config_file(data_root + L"\\config.json", config, error) == ConfigLoad::Ok) {
+            updates = config.updates;
+        }
+        const UpdateCheckResult result = check_production_updates(exe_path, data_root, updates, steam_path);
+        std::lock_guard<std::mutex> lock(g_update_check_mu);
+        g_update_check_message = result.message;
+        g_update_check_restart = result.restart_steam && !steam_path.empty();
+        if (result.restart_steam && steam_path.empty()) {
+            g_update_check_message = L"An update was downloaded. Steam was not restarted because no Steam folder is configured.";
+        }
+        g_update_check_done = true;
+    }).detach();
+    return true;
+}
+
+std::string take_store_update_check(std::wstring& message) {
+    bool restart = false;
+    std::wstring steam;
+    {
+        std::lock_guard<std::mutex> lock(g_update_check_mu);
+        if (!g_update_check_done) {
+            message.clear();
+            return "wait";
+        }
+        message = g_update_check_message;
+        restart = g_update_check_restart;
+        steam = g_update_check_steam;
+        g_update_check_done = false;
+        g_update_check_restart = false;
+        g_update_check_busy = false;
+    }
+    if (restart) {
+        std::thread(restart_steam_after_update, steam).detach();
+    }
+    return "ready";
 }
 
 bool steam_client_running(const std::wstring& steam_exe) {

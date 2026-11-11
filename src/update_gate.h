@@ -13,6 +13,10 @@ bool path_is_dev_source_tree(const std::wstring& path);
 // executable nor the data root sits in a source tree.
 bool updates_should_run(const std::wstring& exe_path, const std::wstring& data_root, bool config_updates_enabled);
 
+// An installed copy leaves when Steam exits so the next launch starts the exe on disk.
+// A source-tree process stays up and attaches again.
+bool installed_host_leaves_when_steam_exits(const std::wstring& exe_path);
+
 struct InstalledVersions {
     std::wstring doomnet;
     std::wstring steamtunes;

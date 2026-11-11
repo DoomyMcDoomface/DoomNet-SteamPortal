@@ -31,7 +31,9 @@
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
+#include <cctype>
 #include <cstdlib>
 #include <cstdio>
 #include <filesystem>
@@ -1476,6 +1478,302 @@ void test_pipe_session() {
     CloseHandle(settled);
 }
 
+struct ScanView {
+    bool parsed = false;
+    bool listing = false;
+    bool done = false;
+    double processed = 0;
+    double remaining = 0;
+    double pending_count = 0;
+    double total_files = 0;
+    double total_tracks = 0;
+};
+
+ScanView scan_view(const std::string& raw) {
+    ScanView view;
+    doomnet::Json parsed;
+    std::string error;
+    if (!doomnet::json_parse(unescape_json_string(raw), parsed, error)) {
+        return view;
+    }
+    view.parsed = true;
+    view.listing = parsed.key_bool("listing");
+    const doomnet::Json* done = parsed.find("done");
+    view.done = done != nullptr && done->type == doomnet::Json::Type::Bool && done->b;
+    auto number_of = [&](const char* key) {
+        const doomnet::Json* found = parsed.find(key);
+        return found != nullptr && found->type == doomnet::Json::Type::Number ? found->n : 0.0;
+    };
+    view.processed = number_of("processed");
+    view.remaining = number_of("remaining");
+    view.pending_count = number_of("pendingCount");
+    view.total_files = number_of("totalFiles");
+    view.total_tracks = number_of("totalTracks");
+    return view;
+}
+
+// The same count the settings page shows: files whose tags were read, against
+// the queue as it stands now. A growing queue must not push the count back to 0.
+struct PageCount {
+    double pending = 0;
+    double shown = 0;
+    double tag_count = 0;
+};
+
+void feed_page_count(PageCount& page, double pending_count, double remaining, double reported) {
+    double pending = page.pending;
+    if (pending_count > pending) {
+        pending = pending_count;
+    }
+    if (remaining > pending) {
+        pending = remaining;
+    }
+    double processed = pending > remaining ? pending - remaining : 0;
+    if (processed == 0 && reported > 0 && reported <= 200) {
+        processed = page.tag_count + reported;
+    }
+    if (reported > processed) {
+        processed = reported;
+    }
+    if (processed < page.tag_count) {
+        processed = page.tag_count;
+    }
+    page.pending = pending;
+    page.shown = processed;
+    page.tag_count = processed;
+}
+
+bool make_junction(const fsn::path& link, const fsn::path& target) {
+    std::wstring command = L"cmd.exe /c mklink /J \"" + link.wstring() + L"\" \"" + target.wstring() + L"\"";
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION info{};
+    std::vector<wchar_t> buffer(command.begin(), command.end());
+    buffer.push_back(0);
+    if (!CreateProcessW(nullptr, buffer.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &startup, &info)) {
+        return false;
+    }
+    WaitForSingleObject(info.hProcess, 15000);
+    DWORD code = 1;
+    GetExitCodeProcess(info.hProcess, &code);
+    CloseHandle(info.hThread);
+    CloseHandle(info.hProcess);
+    return code == 0;
+}
+
+void test_scan_library() {
+    section("scan: a local library advances past 0 and finishes");
+    wchar_t source_env[MAX_PATH]{};
+    std::wstring source = L"D:\\Documents\\Repos\\SteamTunes";
+    if (GetEnvironmentVariableW(L"DOOMNET_PLAYER_SOURCE", source_env, MAX_PATH) > 0) {
+        source = source_env;
+    }
+    const fsn::path backend_source = fsn::path(source) / L"backend";
+    if (!fsn::exists(backend_source / L"main.lua")) {
+        check(false, "player source not found at " + wide_to_utf8(backend_source.wstring()) + " (set DOOMNET_PLAYER_SOURCE)");
+        return;
+    }
+    const fsn::path player_root = fsn::path(g_root) / L"scan-player";
+    copy_player(backend_source, player_root / L"backend");
+    HostConfig config;
+    config.backend_dir = (player_root / L"backend").wstring();
+    config.steam_path = g_root + L"\\fake-steam";
+    config.install_path = g_root;
+
+    const fsn::path music = fsn::path(g_root) / L"local-music";
+    const int albums = 40;
+    const int tracks_per_album = 12;
+    const int flat_tracks = 400;
+    int expected = 0;
+    for (int album = 0; album < albums; ++album) {
+        for (int track = 0; track < tracks_per_album; ++track) {
+            const wchar_t* ext = (track % 5 == 0) ? L".flac" : (track % 5 == 1) ? L".m4a" : (track % 5 == 2) ? L".ogg" : (track % 5 == 3) ? L".wav" : L".mp3";
+            wchar_t name[64]{};
+            swprintf_s(name, L"a%02d\\album\\t%02d%s", album, track, ext);
+            write_text(music / name, "sound");
+            ++expected;
+        }
+    }
+    for (int track = 0; track < flat_tracks; ++track) {
+        wchar_t name[32]{};
+        swprintf_s(name, L"flat\\song-%03d.mp3", track);
+        write_text(music / name, "sound");
+        ++expected;
+    }
+    write_text(music / L"flat" / L"notes.txt", "not music");
+    write_text(music / L"flat" / L"cover.jpg", "picture");
+    write_text(music / L"flat" / L"AlbumArt_ABC123_Large.jpg", "picture");
+    write_text(music / L"empty" / L".keep", "x");
+    const fsn::path unicode_dir = music / L"Ni\u00f1o";
+    write_text(unicode_dir / L"uno.mp3", "sound");
+    write_text(unicode_dir / L"dos.flac", "sound");
+    write_text(unicode_dir / L"tres.m4a", "sound");
+    expected += 3;
+    const bool junction = make_junction(music / L"again", music);
+    check(junction, "a folder link back to the music folder could not be created");
+
+    Rig rig(config);
+    install_fake_page(rig);
+    if (!rig.start()) {
+        return;
+    }
+    check(rig.state->wait_loaded(120000), "main.lua and on_load finished within 120 s");
+    ResolveMsg added = rig.call_wait("add_music_folder", {str(wide_to_utf8(music.wstring()))});
+    check(added.ok && contains(added.json, "true"), "add_music_folder did not accept the local library (got " + added.json.substr(0, 200) + ")");
+
+    const auto started = std::chrono::steady_clock::now();
+    ResolveMsg reply = rig.call_wait("rescan_library_start", {flag(true), flag(false)}, 20000);
+    check(reply.ok, "rescan_library_start failed (got " + reply.json.substr(0, 200) + ")");
+    ScanView start = scan_view(reply.json);
+    std::printf("info  scan start listing=%d pending=%.0f files=%.0f\n", start.listing ? 1 : 0, start.pending_count, start.total_files);
+    PageCount page;
+    if (!(start.listing && start.pending_count <= 0)) {
+        feed_page_count(page, start.pending_count, start.pending_count, 0);
+    }
+    double previous_processed = 0;
+    double previous_shown = page.shown;
+    int batches = 0;
+    int slow_batches = 0;
+    long long slowest_ms = 0;
+    bool advanced = page.shown > 0;
+    bool identity = true;
+    ScanView last = start;
+    for (int attempt = 0; attempt < 4000; ++attempt) {
+        const auto batch_started = std::chrono::steady_clock::now();
+        reply = rig.call_wait("scan_library_batch", {num(25)}, 20000);
+        const long long batch_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - batch_started).count();
+        if (batch_ms > slowest_ms) {
+            slowest_ms = batch_ms;
+        }
+        if (batch_ms > 8000) {
+            ++slow_batches;
+        }
+        if (!reply.ok) {
+            check(false, "scan_library_batch failed (got " + reply.json.substr(0, 200) + ")");
+            break;
+        }
+        last = scan_view(reply.json);
+        if (!last.parsed) {
+            check(false, "scan_library_batch did not return JSON (got " + reply.json.substr(0, 200) + ")");
+            break;
+        }
+        ++batches;
+        if (last.processed + 0.5 < previous_processed) {
+            std::printf("info  files-read count reset from %.0f to %.0f\n", previous_processed, last.processed);
+        }
+        previous_processed = last.processed;
+        if (last.pending_count > 0 && std::llround(last.processed + last.remaining) != std::llround(last.pending_count)) {
+            std::printf("info  count mismatch processed=%.0f remaining=%.0f pending=%.0f\n", last.processed, last.remaining, last.pending_count);
+            identity = false;
+        }
+        const bool pure_listing = last.listing && last.processed == 0 && last.pending_count == 0;
+        if (pure_listing && page.shown > 0) {
+            check(false, "the page went back to finding files after the count had already moved");
+            break;
+        }
+        if (!pure_listing) {
+            feed_page_count(page, last.pending_count, last.remaining, last.processed);
+        }
+        if (page.shown + 0.5 < previous_shown) {
+            check(false, "the settings count went backwards");
+            break;
+        }
+        previous_shown = page.shown;
+        if (page.shown > 0) {
+            advanced = true;
+        }
+        if (last.done && !last.listing) {
+            break;
+        }
+        if (std::chrono::steady_clock::now() - started > std::chrono::seconds(25)) {
+            break;
+        }
+    }
+    const long long elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count();
+    std::printf("info  scan batches=%d elapsed=%lldms slowest=%lldms shown=%.0f processed=%.0f remaining=%.0f pending=%.0f tracks=%.0f done=%d listing=%d\n",
+                batches, elapsed_ms, slowest_ms, page.shown, last.processed, last.remaining, last.pending_count, last.total_tracks, last.done ? 1 : 0, last.listing ? 1 : 0);
+    check(advanced, "the count stayed at 0 while local files were scanned");
+    check(identity, "files read plus files left did not equal the queue");
+    check(slow_batches == 0, "a scan batch took longer than 8 seconds");
+    check(last.done && !last.listing, "the scan did not finish");
+    check(elapsed_ms < 25000, "the scan was still running after 25 seconds");
+    check(std::llround(last.total_tracks) == expected, "the library does not contain every local audio file");
+    check(std::llround(page.shown) == expected, "the settings count does not reach the number of local audio files");
+
+    const std::string index = read_text(player_root / L"backend" / L"data" / L"library_index.json");
+    int picture_tracks = 0;
+    int link_tracks = 0;
+    doomnet::Json library;
+    std::string library_error;
+    if (!doomnet::json_parse(index, library, library_error) || library.type != doomnet::Json::Type::Array) {
+        check(false, "the library index is not a list of tracks");
+    } else {
+        for (const doomnet::Json& track : library.a) {
+            std::string path = track.key_string("path");
+            for (char& ch : path) {
+                ch = static_cast<char>(tolower(static_cast<unsigned char>(ch)));
+            }
+            const bool picture = path.size() >= 4 && (path.compare(path.size() - 4, 4, ".jpg") == 0 || path.compare(path.size() - 4, 4, ".txt") == 0);
+            if (picture) {
+                ++picture_tracks;
+            }
+            if (path.find("\\again\\") != std::string::npos || path.find("/again/") != std::string::npos) {
+                ++link_tracks;
+            }
+        }
+    }
+    check(picture_tracks == 0, "a picture or a text file was indexed as a song");
+    check(link_tracks == 0, "the folder link was scanned as a second copy of the library");
+    check(index.find("uno.mp3") != std::string::npos, "a file in a non-English folder was not indexed");
+    check(index.find("song-000.mp3") != std::string::npos && index.find("song-399.mp3") != std::string::npos, "the flat folder was not indexed from both ends");
+    reply = rig.call_wait("get_library_info");
+    check(reply.ok && contains(reply.json, "\\\"count\\\":" + std::to_string(expected)), "get_library_info does not report the local file count (got " + reply.json.substr(0, 200) + ")");
+
+    const auto second_started = std::chrono::steady_clock::now();
+    reply = rig.call_wait("rescan_library_start", {flag(false), flag(false)}, 20000);
+    check(reply.ok, "the second scan did not start");
+    ScanView second = scan_view(reply.json);
+    for (int attempt = 0; attempt < 4000 && !(second.done && !second.listing); ++attempt) {
+        reply = rig.call_wait("scan_library_batch", {num(25)}, 20000);
+        if (!reply.ok) {
+            break;
+        }
+        second = scan_view(reply.json);
+        if (std::chrono::steady_clock::now() - second_started > std::chrono::seconds(20)) {
+            break;
+        }
+    }
+    const long long second_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - second_started).count();
+    std::printf("info  second scan %lldms tracks=%.0f done=%d listing=%d\n", second_ms, second.total_tracks, second.done ? 1 : 0, second.listing ? 1 : 0);
+    check(second.done && !second.listing && second_ms < 20000, "scanning the same local files again did not finish within 20 seconds");
+    check(std::llround(second.total_tracks) == expected, "the second scan changed the number of local files");
+
+    write_text(music / L"flat" / L"brand-new.mp3", "sound");
+    reply = rig.call_wait("rescan_library_start", {flag(false), flag(true)}, 20000);
+    check(reply.ok, "the scan for a new file did not start");
+    ScanView added_scan = scan_view(reply.json);
+    for (int attempt = 0; attempt < 4000 && !(added_scan.done && !added_scan.listing); ++attempt) {
+        reply = rig.call_wait("scan_library_batch", {num(25)}, 20000);
+        if (!reply.ok) {
+            break;
+        }
+        added_scan = scan_view(reply.json);
+    }
+    std::printf("info  new-file scan tracks=%.0f added field in %s\n", added_scan.total_tracks, reply.json.substr(0, 180).c_str());
+    check(added_scan.done && !added_scan.listing && std::llround(added_scan.total_tracks) == expected + 1, "a new local file was not added");
+    const std::string index_after = read_text(player_root / L"backend" / L"data" / L"library_index.json");
+    check(index_after.find("brand-new.mp3") != std::string::npos, "brand-new.mp3 is not in the library");
+    check(index_after.find("\\again\\") == std::string::npos && index_after.find("/again/") == std::string::npos, "the folder link was scanned as a second copy of the library");
+
+    rig.browser.stop();
+    rig.state->stop();
+    stop_player_supervisor(player_root / L"backend" / L"data" / L"proc_jobs");
+    check(reap_test_supervisors(false) == 0, "no supervisor process is left running");
+    const std::string log = log_text();
+    check(!contains(log, "Lua panic"), "no Lua panic in the log");
+    check(!contains(log, "caught a C++ exception"), "no C++ exception was caught by the state thread");
+}
+
 }  // namespace
 
 int main() {
@@ -1493,13 +1791,21 @@ int main() {
     SetEnvironmentVariableW(L"DOOMNET_ROOT", g_root.c_str());
     std::printf("root  %s\n", wide_to_utf8(g_root).c_str());
 
-    test_synthetic();
-    test_no_page_hook();
-    test_missing_main();
-    test_real_player();
-    test_page_bridge();
-    test_pipe_session();
-    test_resident();
+    wchar_t only_test[32]{};
+    const DWORD only_test_len = GetEnvironmentVariableW(L"DOOMNET_HOST_ONLY", only_test, 32);
+    const bool scan_only = only_test_len > 0 && _wcsicmp(only_test, L"scan") == 0;
+    if (!scan_only) {
+        test_synthetic();
+        test_no_page_hook();
+        test_missing_main();
+        test_real_player();
+        test_page_bridge();
+        test_pipe_session();
+        test_resident();
+    }
+    if (only_test_len == 0 || scan_only) {
+        test_scan_library();
+    }
 
     reap_test_supervisors(true);  // whatever happened above, leave nothing pointing at the temp folder
     std::printf("%d checks, %d failed\n", g_checks, g_failed);

@@ -270,11 +270,26 @@
     // Classic script, not a module. bootstrap.js is the only player file the
     // page inserts. music-player-inject.js is not used, so the player is not
     // loaded twice.
+    // The player script runs in the Steam window. That window is not the page
+    // that loaded this script, so it does not already have the Store record.
+    function shareHostState(win) {
+        if (!win || win === window) {
+            return;
+        }
+        try {
+            if (window.__doomnetStore) {
+                win.__doomnetStore = window.__doomnetStore;
+            }
+        } catch (err) {
+        }
+    }
+
     function insertPlayer(win) {
         var cfg = window.__doomnetConfig;
         if (!cfg || !cfg.player || !win) {
             return;
         }
+        shareHostState(win);
         giveBinding(win);
         var doc = null;
         try {
@@ -1330,6 +1345,7 @@
                 }
             }
             if (title === "Steam" || title === "Steam Games List") {
+                shareHostState(win);
                 watchSteamTunesTab(win);
                 preloadLibrary(win);
             }

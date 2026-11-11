@@ -156,12 +156,12 @@ void wait_for_library_grid(SteamPage& page, HANDLE stop, const std::wstring& roo
     }
 }
 
-void prepare_installed_files(const std::wstring& steam, const std::wstring& backend, const Config& config) {
+void prepare_installed_files(const std::wstring& steam, const Config& config) {
     std::string page_preamble;
     std::wstring install_root;
     std::wstring root_error;
     data_root(install_root, root_error);
-    const std::wstring skin_dir = first_existing_marker(L"D:\\Documents\\Repos\\SteamSkin", install_root.empty() ? L"" : install_root + L"\\skin", L"skin.json");
+    const std::wstring skin_dir = launch_payload_dir(L"D:\\Documents\\Repos\\SteamSkin", install_root.empty() ? L"" : install_root + L"\\skin", L"skin.json");
     const std::wstring skin_json = skin_dir + L"\\skin.json";
     if (file_exists(skin_json)) {
         const SkinFileCopy copied = copy_skin_files(skin_dir, steam);
@@ -206,7 +206,7 @@ void prepare_installed_files(const std::wstring& steam, const std::wstring& back
         : L"Listed SteamSkin in the Store as not installed.");
     set_boot_preamble(page_preamble);
     const wchar_t* assets[] = {L"bootstrap.js", L"steam-music-player.css", L"audio-engine.js", L"steam-music-player.js", L"mix-image.js"};
-    const std::wstring asset_src = first_existing_marker(L"D:\\Documents\\Repos\\SteamTunes\\backend\\assets\\frontend", install_root.empty() ? L"" : install_root + L"\\player\\backend\\assets\\frontend", L"steam-music-player.js");
+    const std::wstring asset_src = launch_payload_dir(L"D:\\Documents\\Repos\\SteamTunes\\backend\\assets\\frontend", install_root.empty() ? L"" : install_root + L"\\player\\backend\\assets\\frontend", L"steam-music-player.js");
     const int copied_assets = copy_named(asset_src, steam + L"\\steamui\\steam-music-player", assets, 5);
     if (copied_assets > 0) {
         log_event(L"info", L"payload", (L"Copied " + std::to_wstring(copied_assets) + L" player file(s) into '" + steam + L"\\steamui\\steam-music-player'.").c_str());
@@ -214,12 +214,7 @@ void prepare_installed_files(const std::wstring& steam, const std::wstring& back
     const std::string patched = patched_player_ui_text();
     if (!patched.empty()) {
         std::wstring write_error;
-        const std::wstring ui_path = backend + L"\\assets\\frontend\\steam-music-player.js";
         const std::wstring published = steam + L"\\steamui\\steam-music-player\\steam-music-player.js";
-        if (!write_new_file(ui_path, patched.data(), patched.size(), write_error) && !write_error.empty()) {
-            log_event(L"warn", L"payload", write_error.c_str());
-        }
-        write_error.clear();
         if (!write_new_file(published, patched.data(), patched.size(), write_error) && !write_error.empty()) {
             log_event(L"warn", L"payload", write_error.c_str());
         }
@@ -227,12 +222,7 @@ void prepare_installed_files(const std::wstring& steam, const std::wstring& back
     const std::string patched_engine = patched_player_audio_engine_text();
     if (!patched_engine.empty()) {
         std::wstring write_error;
-        const std::wstring engine_path = backend + L"\\assets\\frontend\\audio-engine.js";
         const std::wstring published_engine = steam + L"\\steamui\\steam-music-player\\audio-engine.js";
-        if (!write_new_file(engine_path, patched_engine.data(), patched_engine.size(), write_error) && !write_error.empty()) {
-            log_event(L"warn", L"payload", write_error.c_str());
-        }
-        write_error.clear();
         if (!write_new_file(published_engine, patched_engine.data(), patched_engine.size(), write_error) && !write_error.empty()) {
             log_event(L"warn", L"payload", write_error.c_str());
         }
@@ -240,12 +230,7 @@ void prepare_installed_files(const std::wstring& steam, const std::wstring& back
     const std::string patched_css = patched_player_css_text();
     if (!patched_css.empty()) {
         std::wstring write_error;
-        const std::wstring css_path = backend + L"\\assets\\frontend\\steam-music-player.css";
         const std::wstring published_css = steam + L"\\steamui\\steam-music-player\\steam-music-player.css";
-        if (!write_new_file(css_path, patched_css.data(), patched_css.size(), write_error) && !write_error.empty()) {
-            log_event(L"warn", L"payload", write_error.c_str());
-        }
-        write_error.clear();
         if (!write_new_file(published_css, patched_css.data(), patched_css.size(), write_error) && !write_error.empty()) {
             log_event(L"warn", L"payload", write_error.c_str());
         }
@@ -255,13 +240,19 @@ void prepare_installed_files(const std::wstring& steam, const std::wstring& back
 void run_attach(HANDLE stop, const std::wstring& root, const std::wstring& steam, const Config& config) {
     const std::wstring flag = root + L"\\stop.flag";
     const std::wstring backend = root + L"\\player\\backend";
-    log_event(L"info", L"startup", (L"Attaching to Steam the user started. This host stays up so the next launch loads the player and the skin. Stop it by signaling Local\\DoomNetStop or by creating '" + flag + L"'.").c_str());
+    wchar_t running_exe[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, running_exe, MAX_PATH);
+    if (installed_host_leaves_when_steam_exits(running_exe)) {
+        log_event(L"info", L"startup", L"Attaching to Steam the user started. This installed copy reads the player and skin in its data folder and checks GitHub for updates. It leaves when Steam exits so the next launch starts the program on disk.");
+    } else {
+        log_event(L"info", L"startup", (L"Attaching to Steam the user started. This host stays up so the next launch loads the player and the skin. Stop it by signaling Local\\DoomNetStop or by creating '" + flag + L"'.").c_str());
+    }
     if (steam.empty()) {
         log_event(L"error", L"steam", L"Steam was not found, so this launch cannot inject.");
     } else if (!main_lua_present(backend)) {
         log_event(L"error", L"lua", (L"'" + backend + L"\\main.lua' is not there, so the player was not started.").c_str());
     } else {
-        prepare_installed_files(steam, backend, config);
+        prepare_installed_files(steam, config);
     }
 
     ArtThumbs thumbs;
@@ -313,11 +304,10 @@ void run_attach(HANDLE stop, const std::wstring& root, const std::wstring& steam
     }
 
     ULONGLONG update_checked = GetTickCount64();
+    bool saw_steam = false;
     while (!stop_requested(stop, root)) {
         if (GetTickCount64() - update_checked >= 60ull * 60ull * 1000ull) {
             update_checked = GetTickCount64();
-            wchar_t running_exe[MAX_PATH] = {};
-            GetModuleFileNameW(nullptr, running_exe, MAX_PATH);
             const std::wstring running_steam = !config.steam_path.empty() ? config.steam_path : steam;
             note_production_update_gate(running_exe, root, config.updates, running_steam);
         }
@@ -331,16 +321,24 @@ void run_attach(HANDLE stop, const std::wstring& root, const std::wstring& steam
                 page.stop();
                 page_up = false;
                 attached_pid = 0;
-                log_event(L"info", L"steam", L"Steam exited. The host stays up and will inject the next launch.");
             }
             if (holding_pid != 0) {
                 drop_client_windows();
                 holding_pid = 0;
             }
             presented_pid = 0;
+            if (saw_steam && installed_host_leaves_when_steam_exits(running_exe)) {
+                log_event(L"info", L"steam", L"Steam exited. This installed copy is leaving so the next Steam launch starts the program on disk.");
+                break;
+            }
+            if (saw_steam) {
+                log_event(L"info", L"steam", L"Steam exited. The host stays up and will inject the next launch.");
+                saw_steam = false;
+            }
             global_keys_wait(250);
             continue;
         }
+        saw_steam = true;
         if (presented_pid != pid && holding_pid != pid) {
             hold_client_windows(pid);
             holding_pid = pid;
