@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
@@ -14,8 +15,21 @@ namespace DoomNetSetup
     public static class Program
     {
         [STAThread]
-        public static int Main()
+        public static int Main(string[] args)
         {
+            if (args.Length >= 2 && args[0] == "--copy-payload")
+            {
+                bool player = false;
+                bool skin = false;
+                string steam = args.Length > 2 ? args[2] : "";
+                for (int i = 3; i < args.Length; i++)
+                {
+                    if (args[i] == "--player") player = true;
+                    if (args[i] == "--skin") skin = true;
+                }
+                string error = Wizard.InstallFiles(args[1], steam, player, skin, AppDomain.CurrentDomain.BaseDirectory);
+                return error.Length == 0 ? 0 : 1;
+            }
             string folder = AppDomain.CurrentDomain.BaseDirectory;
             string xamlPath = Path.Combine(folder, "wizard.xaml");
             if (!File.Exists(xamlPath))
@@ -60,6 +74,7 @@ namespace DoomNetSetup
         bool player;
         bool skin;
         bool matchSkin;
+        bool finished;
 
         static readonly SolidColorBrush Red = Freeze(179, 50, 50);
         static readonly SolidColorBrush Text = Freeze(217, 218, 221);
@@ -198,11 +213,234 @@ namespace DoomNetSetup
             }
             if (page == 3)
             {
-                window.Close();
+                if (finished)
+                {
+                    window.Close();
+                    return;
+                }
+                Install();
                 return;
             }
             page = page == 1 && !both ? 3 : page + 1;
             Update();
+        }
+
+        static string FindDoomNet()
+        {
+            string beside = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "DoomNet.exe");
+            if (File.Exists(beside))
+            {
+                return beside;
+            }
+            string built = @"D:\Documents\Repos\DoomNet-SteamPortal\build\Release\DoomNet.exe";
+            if (File.Exists(built))
+            {
+                return built;
+            }
+            return "";
+        }
+
+        public static string InstallFiles(string root, string steam, bool player, bool skin, string sourceDir)
+        {
+            string playerSource = Path.Combine(sourceDir, "payload", "player");
+            string skinSource = Path.Combine(sourceDir, "payload", "skin");
+            string host = Path.Combine(sourceDir, "DoomNet.exe");
+            if (player && !File.Exists(Path.Combine(playerSource, "backend", "main.lua")))
+            {
+                return "The setup folder is missing payload\\player\\backend\\main.lua, so the player was not copied.";
+            }
+            if (skin && !File.Exists(Path.Combine(skinSource, "skin.json")))
+            {
+                return "The setup folder is missing payload\\skin\\skin.json, so the skin was not copied.";
+            }
+            if (!File.Exists(host))
+            {
+                return "DoomNet.exe is not in the setup folder, so it was not copied.";
+            }
+            Directory.CreateDirectory(root);
+            if (player)
+            {
+                CopyTree(playerSource, Path.Combine(root, "player"));
+            }
+            if (skin)
+            {
+                CopyTree(skinSource, Path.Combine(root, "skin"));
+            }
+            File.Copy(host, Path.Combine(root, "DoomNet.exe"), true);
+            string color = "steam";
+            File.WriteAllText(Path.Combine(root, "config.json"),
+                "{\n  \"steamPath\": " + JsonString(steam) + ",\n  \"player\": " + (player ? "true" : "false") + ",\n  \"skin\": " + (skin ? "true" : "false") + ",\n  \"playerColor\": \"" + color + "\",\n  \"streamTunesRelay\": \"\",\n  \"updates\": true\n}\n",
+                new System.Text.UTF8Encoding(false));
+            if (player)
+            {
+                string settings = Path.Combine(root, "player", "backend", "data", "settings.json");
+                if (!File.Exists(settings))
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(settings));
+                    File.WriteAllText(settings, "{\"uiColorTheme\":\"steam\"}\n", new System.Text.UTF8Encoding(false));
+                }
+            }
+            File.WriteAllText(Path.Combine(root, "versions.json"),
+                "{\n  \"doomnet\": \"0.1.0\",\n  \"steamtunes\": " + JsonString(player ? ReadVersion(Path.Combine(playerSource, "plugin.json")) : "") + ",\n  \"steamskin\": " + JsonString(skin ? ReadVersion(Path.Combine(skinSource, "skin.json")) : "") + "\n}\n",
+                new System.Text.UTF8Encoding(false));
+            if (player && !File.Exists(Path.Combine(root, "player", "backend", "main.lua")))
+            {
+                return "The copy finished, but " + Path.Combine(root, "player", "backend", "main.lua") + " is not there.";
+            }
+            if (skin && !File.Exists(Path.Combine(root, "skin", "skin.json")))
+            {
+                return "The copy finished, but " + Path.Combine(root, "skin", "skin.json") + " is not there.";
+            }
+            if (!File.Exists(Path.Combine(root, "DoomNet.exe")))
+            {
+                return "The copy finished, but DoomNet.exe is not in " + root + ".";
+            }
+            return "";
+        }
+
+        static void CopyTree(string from, string to)
+        {
+            Directory.CreateDirectory(to);
+            foreach (string file in Directory.GetFiles(from))
+            {
+                FileAttributes attrs = File.GetAttributes(file);
+                if ((attrs & FileAttributes.ReparsePoint) != 0)
+                {
+                    continue;
+                }
+                string dest = Path.Combine(to, Path.GetFileName(file));
+                if (string.Equals(Path.GetFileName(file), "settings.json", StringComparison.OrdinalIgnoreCase) && File.Exists(dest))
+                {
+                    continue;
+                }
+                File.Copy(file, dest, true);
+            }
+            foreach (string dir in Directory.GetDirectories(from))
+            {
+                FileAttributes attrs = File.GetAttributes(dir);
+                if ((attrs & FileAttributes.ReparsePoint) != 0 || string.Equals(Path.GetFileName(dir), ".git", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+                CopyTree(dir, Path.Combine(to, Path.GetFileName(dir)));
+            }
+        }
+
+        static string JsonString(string value)
+        {
+            return "\"" + (value ?? "").Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
+        }
+
+        static string ReadVersion(string path)
+        {
+            if (!File.Exists(path))
+            {
+                return "";
+            }
+            string text = File.ReadAllText(path);
+            int at = text.IndexOf("\"version\"", StringComparison.Ordinal);
+            if (at < 0)
+            {
+                return "";
+            }
+            int quote = text.IndexOf('"', text.IndexOf(':', at));
+            int end = quote < 0 ? -1 : text.IndexOf('"', quote + 1);
+            if (quote < 0 || end <= quote + 1)
+            {
+                return "";
+            }
+            return text.Substring(quote + 1, end - quote - 1);
+        }
+
+        static void OpenFolder(string root)
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "explorer.exe",
+                Arguments = "\"" + root + "\"",
+                UseShellExecute = true
+            });
+        }
+
+        void Install()
+        {
+            string steam = steamPath.Text.Trim();
+            if (steam.IndexOf("..", StringComparison.Ordinal) >= 0 || !File.Exists(Path.Combine(steam, "steam.exe")))
+            {
+                summary.Text = "Choose a Steam folder that contains steam.exe. Nothing was copied.";
+                MessageBox.Show(summary.Text, "DoomNet Setup", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            string root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DoomNet");
+            string copied;
+            try
+            {
+                copied = InstallFiles(root, steam, player, skin, AppDomain.CurrentDomain.BaseDirectory);
+            }
+            catch (Exception ex)
+            {
+                copied = "The files could not be written to " + root + ". " + ex.Message;
+            }
+            if (copied.Length > 0)
+            {
+                summary.Text = copied;
+                MessageBox.Show(copied, "DoomNet Setup", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+            if (player && skin && matchSkin)
+            {
+                string settings = Path.Combine(root, "player", "backend", "data", "settings.json");
+                if (File.Exists(settings) && File.ReadAllText(settings).IndexOf("\"red\"", StringComparison.Ordinal) < 0 && new FileInfo(settings).Length < 80)
+                {
+                    File.WriteAllText(settings, "{\"uiColorTheme\":\"red\"}\n", new System.Text.UTF8Encoding(false));
+                }
+                File.WriteAllText(Path.Combine(root, "config.json"),
+                    "{\n  \"steamPath\": " + JsonString(steam) + ",\n  \"player\": true,\n  \"skin\": true,\n  \"playerColor\": \"red\",\n  \"streamTunesRelay\": \"\",\n  \"updates\": true\n}\n",
+                    new System.Text.UTF8Encoding(false));
+            }
+            bool steamOpen = Process.GetProcessesByName("steam").Length > 0 || Process.GetProcessesByName("steamwebhelper").Length > 0;
+            if (steamOpen)
+            {
+                summary.Text = "The files are in " + root + ". Quit Steam completely, including the taskbar icon, then click Install again so they can load inside Steam.";
+                MessageBox.Show(summary.Text, "DoomNet Setup", MessageBoxButton.OK, MessageBoxImage.Information);
+                OpenFolder(root);
+                return;
+            }
+            string exe = FindDoomNet();
+            string hookDll = Path.Combine(steam, "version.dll");
+            string ourDll = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "version.dll");
+            if (exe.Length > 0 && File.Exists(ourDll))
+            {
+                try
+                {
+                    Process hook = Process.Start(new ProcessStartInfo
+                    {
+                        FileName = exe,
+                        Arguments = "--hook \"" + steam.Replace("\"", "") + "\"",
+                        UseShellExecute = true,
+                        Verb = "runas"
+                    });
+                    if (hook != null)
+                    {
+                        hook.WaitForExit(120000);
+                    }
+                }
+                catch (Exception)
+                {
+                }
+            }
+            bool hookThere = File.Exists(hookDll) && File.Exists(ourDll) && new FileInfo(hookDll).Length == new FileInfo(ourDll).Length;
+            OpenFolder(root);
+            if (!hookThere)
+            {
+                summary.Text = "The player and skin are in " + root + ". version.dll is not beside steam.exe yet, so Steam will not show them until that file is copied. Click Install again and choose Yes.";
+                MessageBox.Show(summary.Text, "DoomNet Setup", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            finished = true;
+            nextButton.Content = "Close";
+            summary.Text = "Installed into " + root + ". version.dll is beside steam.exe. Open Steam. DoomNet shows up inside Steam.";
+            MessageBox.Show(summary.Text, "DoomNet Setup", MessageBoxButton.OK, MessageBoxImage.Information);
         }
 
         void GoBack()
@@ -266,7 +504,7 @@ namespace DoomNetSetup
             backButton.Visibility = page == 0 ? Visibility.Collapsed : Visibility.Visible;
             if (page == 3)
             {
-                nextButton.Content = "Close";
+                nextButton.Content = "Install";
                 nextButton.IsEnabled = true;
             }
             else
@@ -287,7 +525,7 @@ namespace DoomNetSetup
             summary.Text = "Player: " + (player ? "on" : "off")
                 + "\nSkin: " + (skin ? "on" : "off")
                 + "\nColor: " + color
-                + "\n\nThis is a preview. Closing the window installs nothing.";
+                + "\n\nInstall copies the selected pieces into the DoomNet data folder. Steam is not started by this window.";
         }
 
         static void SetBubble(Border bubble, TextBlock tick, bool selected)

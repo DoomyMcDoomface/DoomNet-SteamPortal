@@ -2,15 +2,21 @@
 
 #include "art_thumbs.h"
 #include "browser_thread.h"
+#include "catalog.h"
 #include "global_hotkeys.h"
 #include "host_config.h"
 #include "log.h"
+#include "json_wire.h"
 #include "page_bridge.h"
+#include "paths.h"
+#include "payload.h"
 #include "pipe_session.h"
 #include "skin_page.h"
 #include "state_thread.h"
 #include "steam_attach.h"
 #include "streamtunes_identity.h"
+#include "text.h"
+#include "update_gate.h"
 #include "wide_io.h"
 
 #include <windows.h>
@@ -152,7 +158,10 @@ void wait_for_library_grid(SteamPage& page, HANDLE stop, const std::wstring& roo
 
 void prepare_installed_files(const std::wstring& steam, const std::wstring& backend, const Config& config) {
     std::string page_preamble;
-    const std::wstring skin_dir = L"D:\\Documents\\Repos\\SteamSkin";
+    std::wstring install_root;
+    std::wstring root_error;
+    data_root(install_root, root_error);
+    const std::wstring skin_dir = first_existing_marker(L"D:\\Documents\\Repos\\SteamSkin", install_root.empty() ? L"" : install_root + L"\\skin", L"skin.json");
     const std::wstring skin_json = skin_dir + L"\\skin.json";
     if (file_exists(skin_json)) {
         const SkinFileCopy copied = copy_skin_files(skin_dir, steam);
@@ -178,9 +187,26 @@ void prepare_installed_files(const std::wstring& steam, const std::wstring& back
     } else {
         log_event(L"info", L"party", L"StreamTunes has no relay URL in config.json, so its controls stay hidden.");
     }
+    std::wstring version_root;
+    std::wstring version_error;
+    InstalledVersions versions;
+    if (data_root(version_root, version_error)) {
+        std::wstring ignored;
+        load_installed_versions(version_root + L"\\versions.json", versions, ignored);
+    }
+    const std::string skin_version = config.skin ? wide_to_utf8(versions.steamskin) : std::string();
+    const std::string store_script = "window.__doomnetStore={apps:[{id:\"steamskin\",name:\"SteamSkin\",installed:" +
+                                      std::string(config.skin ? "true" : "false") + ",version:" + json_quote(skin_version) + "}]};";
+    if (!page_preamble.empty()) {
+        page_preamble += "\n";
+    }
+    page_preamble += store_script;
+    log_event(L"info", L"inject", config.skin
+        ? (L"Listed SteamSkin in the Store as installed" + (versions.steamskin.empty() ? std::wstring(L".") : L" version '" + versions.steamskin + L"'.")).c_str()
+        : L"Listed SteamSkin in the Store as not installed.");
     set_boot_preamble(page_preamble);
     const wchar_t* assets[] = {L"bootstrap.js", L"steam-music-player.css", L"audio-engine.js", L"steam-music-player.js", L"mix-image.js"};
-    const std::wstring asset_src = L"D:\\Documents\\Repos\\SteamTunes\\backend\\assets\\frontend";
+    const std::wstring asset_src = first_existing_marker(L"D:\\Documents\\Repos\\SteamTunes\\backend\\assets\\frontend", install_root.empty() ? L"" : install_root + L"\\player\\backend\\assets\\frontend", L"steam-music-player.js");
     const int copied_assets = copy_named(asset_src, steam + L"\\steamui\\steam-music-player", assets, 5);
     if (copied_assets > 0) {
         log_event(L"info", L"payload", (L"Copied " + std::to_wstring(copied_assets) + L" player file(s) into '" + steam + L"\\steamui\\steam-music-player'.").c_str());
@@ -286,7 +312,15 @@ void run_attach(HANDLE stop, const std::wstring& root, const std::wstring& steam
         global_keys_bind(bus, root + L"\\player\\backend\\data\\settings.json");
     }
 
+    ULONGLONG update_checked = GetTickCount64();
     while (!stop_requested(stop, root)) {
+        if (GetTickCount64() - update_checked >= 60ull * 60ull * 1000ull) {
+            update_checked = GetTickCount64();
+            wchar_t running_exe[MAX_PATH] = {};
+            GetModuleFileNameW(nullptr, running_exe, MAX_PATH);
+            const std::wstring running_steam = !config.steam_path.empty() ? config.steam_path : steam;
+            note_production_update_gate(running_exe, root, config.updates, running_steam);
+        }
         if (steam.empty() || !main_lua_present(backend)) {
             global_keys_wait(250);
             continue;
@@ -390,6 +424,14 @@ void run_resident(StartupMode mode, const std::wstring& root, const std::wstring
         return;
     }
 
+    wchar_t exe_path[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, exe_path, MAX_PATH);
+    const std::wstring steam_folder = !config.steam_path.empty() ? config.steam_path : steam;
+    if (updates_should_run(exe_path, root, config.updates)) {
+        apply_pending_updates(root, steam_folder);
+        note_production_update_gate(exe_path, root, config.updates, steam_folder);
+    }
+
     HANDLE stop = CreateEventW(nullptr, TRUE, FALSE, L"Local\\DoomNetStop");
     if (stop == nullptr) {
         const std::wstring detail = L"Could not create Local\\DoomNetStop, so the only way to stop this process is '" + flag + L"'. " + windows_error_text(GetLastError());
@@ -453,6 +495,10 @@ void run_resident(StartupMode mode, const std::wstring& root, const std::wstring
         global_keys_bind(bus, root + L"\\player\\backend\\data\\settings.json");
     }
 
+    ULONGLONG update_checked = GetTickCount64();
+    bool restart_pending = false;
+    bool quit_sent = false;
+
     for (;;) {
         if (host_up) {
             global_keys_poll();
@@ -478,6 +524,51 @@ void run_resident(StartupMode mode, const std::wstring& root, const std::wstring
             const std::wstring detail = L"'" + flag + L"' is present. The host is leaving.";
             log_event(L"info", L"startup", detail.c_str());
             break;
+        }
+        const ULONGLONG now = GetTickCount64();
+        if (now - update_checked >= 60ull * 60ull * 1000ull) {
+            update_checked = now;
+            note_production_update_gate(exe_path, root, config.updates, steam_folder);
+        }
+        StoreInstallRequest store;
+        if (take_store_install(store)) {
+            if (store.root.empty()) {
+                store.root = root;
+            }
+            if (store.steam_path.empty()) {
+                store.steam_path = !config.steam_path.empty() ? config.steam_path : steam;
+            }
+            const InstallResult installed = install_store_skin(store);
+            if (installed.ok) {
+                restart_pending = true;
+                quit_sent = false;
+            }
+        }
+        if (restart_pending) {
+            std::wstring folder = !config.steam_path.empty() ? config.steam_path : steam;
+            if (folder.empty()) {
+                log_event(L"error", L"installer", L"Steam was not restarted because no Steam folder is configured.");
+                restart_pending = false;
+                continue;
+            }
+            std::wstring steam_exe = folder;
+            if (steam_exe.size() < 9 || _wcsicmp(steam_exe.c_str() + (steam_exe.size() - 9), L"steam.exe") != 0) {
+                if (!steam_exe.empty() && steam_exe.back() != L'\\' && steam_exe.back() != L'/') {
+                    steam_exe += L'\\';
+                }
+                steam_exe += L"steam.exe";
+            }
+            std::wstring restart_error;
+            if (steam_client_running(steam_exe)) {
+                if (!quit_sent) {
+                    ask_steam_to_quit(steam_exe, restart_error);
+                    quit_sent = true;
+                }
+            } else if (start_steam_visible(steam_exe, restart_error)) {
+                restart_pending = false;
+            } else {
+                restart_pending = false;
+            }
         }
     }
 

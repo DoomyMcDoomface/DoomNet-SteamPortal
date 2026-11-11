@@ -83,6 +83,24 @@ bool file_present(const std::wstring& path) {
     return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) == 0;
 }
 
+bool file_contains_marker(const std::wstring& path, const char* marker) {
+    HANDLE handle = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+    std::string bytes;
+    char buffer[65536];
+    DWORD read = 0;
+    while (ReadFile(handle, buffer, sizeof(buffer), &read, nullptr) && read > 0) {
+        bytes.append(buffer, read);
+        if (bytes.find(marker) != std::string::npos || bytes.size() > 16u * 1024u * 1024u) {
+            break;
+        }
+    }
+    CloseHandle(handle);
+    return bytes.find(marker) != std::string::npos;
+}
+
 bool is_allowed_hook_name(const std::wstring& name) {
     const std::wstring lowered = lower_copy(name);
     for (const wchar_t* allowed : kHookFiles) {
@@ -251,6 +269,11 @@ MillenniumState millennium_state(const std::wstring& steam_path) {
         if (!file_present(candidate)) {
             continue;
         }
+        // DoomNet's own hook carries the marker DoomNetWsock32. version.dll with that
+        // marker loads with steam.exe. A version.dll without it is still Millennium.
+        if (file_contains_marker(candidate, "DoomNetWsock32")) {
+            continue;
+        }
         // A plain wsock32.dll could be DoomNet's own bootstrap once that exists.
         // Only Millennium's counts as Active.
         if (lower_copy(name) == L"wsock32.dll" && !is_millennium_bootstrap(candidate)) {
@@ -292,6 +315,10 @@ ToggleResult millennium_off(const std::wstring& steam_path, bool require_steam_c
     for (const wchar_t* name : kHookFiles) {
         const std::wstring candidate = join(steam_path, name);
         if (!file_present(candidate)) {
+            continue;
+        }
+        // DoomNet's version.dll and wsock32.dll carry DoomNetWsock32. Leave them.
+        if (file_contains_marker(candidate, "DoomNetWsock32")) {
             continue;
         }
         // A wsock32.dll without Millennium's shim marker is DoomNet's own bootstrap.

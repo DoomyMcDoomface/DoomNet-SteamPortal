@@ -16,7 +16,7 @@ struct PlaceBootstrapResult {
     std::wstring detail;
 };
 
-// Copies `dll_source` to <steam_path>\wsock32.dll.
+// Copies `dll_source` beside steam.exe. The source file name must be version.dll or wsock32.dll.
 // Refuses when Millennium is active, when the file already there is Millennium's
 // bootstrap, when the file already there is some other unrecognized DLL, when
 // the path is empty or contains "..", when steam.exe is absent, or when the
@@ -43,8 +43,12 @@ struct InjectResult {
 InjectResult launch_and_inject_boot(const std::wstring& steam_exe, const std::wstring& arguments, bool allow_real_client);
 
 // Connects to a Steam the user already started. Does not start steam.exe and
-// does not stop it if the pipe is not ready yet.
+// does not stop it if the pipe is not ready yet. Accepts DoomNet's version.dll
+// or wsock32.dll beside that steam.exe.
 InjectResult inject_running_client(const std::wstring& steam_exe);
+
+// True when version.dll or wsock32.dll beside `steam_folder` contains DoomNet's marker.
+bool doomnet_hook_installed(const std::wstring& steam_folder);
 
 // The pid of steam.exe at `steam_exe`, or 0 when that client is not running.
 unsigned long find_steam_pid(const std::wstring& steam_exe);

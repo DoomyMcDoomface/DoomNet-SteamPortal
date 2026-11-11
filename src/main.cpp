@@ -17,8 +17,11 @@
 #include "instance.h"
 #include "log.h"
 #include "paths.h"
+#include "payload.h"
 #include "resident.h"
 #include "steam_discover.h"
+#include "text.h"
+#include "wide_io.h"
 
 #include <windows.h>
 
@@ -79,6 +82,10 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR command_line, int) {
 
     std::wstring root;
     std::wstring root_error;
+    if (doomnet::command_is_hook(command_line)) {
+        const doomnet::InstallResult hooked = doomnet::run_hook_command(command_line);
+        return hooked.ok ? 0 : 1;
+    }
     const bool rooted = doomnet::data_root(root, root_error);
     if (!rooted) {
         SetEnvironmentVariableW(L"DOOMNET_ROOT", nullptr);
@@ -91,6 +98,14 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR command_line, int) {
     doomnet::log_event(L"info", L"startup", root_detail.c_str());
 
     if (!doomnet::acquire_instance()) {
+        if (doomnet::command_is_install(command_line)) {
+            const wchar_t* sentence = L"Install did not run because DoomNet is already running. It has no window. End DoomNet.exe in Task Manager, then run setup again. Nothing was copied.";
+            doomnet::log_event(L"error", L"installer", sentence);
+            const std::string result_text = doomnet::wide_to_utf8(sentence);
+            std::wstring result_error;
+            doomnet::write_new_file(root + L"\\install-result.txt", result_text.data(), result_text.size(), result_error);
+            return 1;
+        }
         doomnet::log_event(L"info", L"instance", L"Local\\DoomNet is already held by another DoomNet.exe. This process is exiting without starting Steam, writing config, or injecting.");
         return 0;
     }
@@ -108,6 +123,16 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR command_line, int) {
     log_config_result(config_path, loaded, config, config_error);
 
     doomnet::log_event(L"info", L"startup", L"Startup checks finished. Steam was not started and nothing was injected.");
+    if (doomnet::command_is_install(command_line)) {
+        const doomnet::InstallResult installed = doomnet::run_command_line_install(root, command_line, steam);
+        if (!installed.ok && !installed.detail.empty()) {
+            doomnet::log_event(L"error", L"installer", installed.detail.c_str());
+        }
+        const std::string result_text = doomnet::wide_to_utf8(installed.detail);
+        std::wstring result_error;
+        doomnet::write_new_file(root + L"\\install-result.txt", result_text.data(), result_text.size(), result_error);
+        return installed.ok ? 0 : 1;
+    }
     if (!known_argument) {
         const std::wstring detail = L"The argument '" + rejected_argument + L"' is not --run, --watch, or --attach, so this process is exiting without staying running and without starting the Lua host.";
         doomnet::log_event(L"error", L"startup", detail.c_str());

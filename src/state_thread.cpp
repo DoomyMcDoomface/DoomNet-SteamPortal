@@ -6,10 +6,13 @@
 // Resume message arrives. A Lua error fails that one call; the state stays open.
 
 #include "anchors.h"
+#include "folder_pick.h"
 #include "host_internal.h"
+#include "payload.h"
 #include "log.h"
 #include "paths.h"
 #include "state_thread.h"
+#include "stream.h"
 #include "text.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -109,6 +112,69 @@ bool method_name_ok(const std::string& name) {
     return true;
 }
 
+int lua_stream_hook(lua_State* L) {
+    lua_pushboolean(L, stream_hook_up() ? 1 : 0);
+    return 1;
+}
+
+int lua_begin_folder_pick(lua_State* L) {
+    lua_pushboolean(L, begin_folder_pick() ? 1 : 0);
+    return 1;
+}
+
+int lua_folder_pick_result(lua_State* L) {
+    std::wstring path;
+    std::wstring error;
+    const std::string status = folder_pick_take(path, error);
+    lua_pushlstring(L, status.data(), status.size());
+    if (status == "path") {
+        const std::string utf8 = wide_to_utf8(path);
+        lua_pushlstring(L, utf8.data(), utf8.size());
+    } else if (status == "failed") {
+        const std::string utf8 = wide_to_utf8(error);
+        lua_pushlstring(L, utf8.data(), utf8.size());
+    } else {
+        lua_pushliteral(L, "");
+    }
+    return 2;
+}
+
+// Add Folder calls this. It parks between polls so the state thread is not
+// stuck inside the Windows folder chooser.
+constexpr const char* kFolderPickSource =
+    "function pick_music_folder()\n"
+    "  if not doomnet_begin_folder_pick() then\n"
+    "    return \"\"\n"
+    "  end\n"
+    "  local utils = require(\"utils\")\n"
+    "  while true do\n"
+    "    local status, value = doomnet_folder_pick_result()\n"
+    "    if status ~= \"wait\" then\n"
+    "      if status == \"path\" then\n"
+    "        return value or \"\"\n"
+    "      end\n"
+    "      return \"\"\n"
+    "    end\n"
+    "    utils.sleep(200)\n"
+    "  end\n"
+    "end\n";
+
+int lua_doomnet_install_app(lua_State* L) {
+    size_t length = 0;
+    const char* id = luaL_checklstring(L, 1, &length);
+    if (id == nullptr || std::string(id, length) != "steamskin") {
+        lua_pushstring(L, "Only SteamSkin can be installed from the Store.");
+        return 1;
+    }
+    const HostState& host = host_of(L);
+    StoreInstallRequest request;
+    request.root = host.config.install_path;
+    request.steam_path = host.config.steam_path;
+    queue_store_install(request);
+    lua_pushstring(L, "SteamSkin is installing. Steam will restart when the copy finishes so the skin can load. settings.json is left as it is.");
+    return 1;
+}
+
 }  // namespace
 
 bool can_park(lua_State* L) {
@@ -177,6 +243,14 @@ struct StateThread::Impl {
         open_host_utils(L);
         open_host_millennium(L);
         install_host_searcher(L);
+        lua_pushcfunction(L, lua_doomnet_install_app);
+        lua_setglobal(L, "doomnet_install_app");
+        lua_pushcfunction(L, lua_begin_folder_pick);
+        lua_setglobal(L, "doomnet_begin_folder_pick");
+        lua_pushcfunction(L, lua_folder_pick_result);
+        lua_setglobal(L, "doomnet_folder_pick_result");
+        lua_pushcfunction(L, lua_stream_hook);
+        lua_setglobal(L, "doomnet_stream_hook");
 
         // require finds the player's modules next to main.lua, and nowhere else.
         std::string search = host.backend_dir_utf8 + "\\?.lua";
@@ -193,6 +267,12 @@ struct StateThread::Impl {
         if (luaL_dostring(L, kCompatSource) != LUA_OK) {
             const char* message = lua_tostring(L, -1);
             error = std::string("The Lua 5.1 compatibility globals failed to load: ") + (message != nullptr ? message : "?");
+            lua_pop(L, 1);
+            return false;
+        }
+        if (luaL_dostring(L, kFolderPickSource) != LUA_OK) {
+            const char* message = lua_tostring(L, -1);
+            error = std::string("The music folder chooser failed to load: ") + (message != nullptr ? message : "?");
             lua_pop(L, 1);
             return false;
         }

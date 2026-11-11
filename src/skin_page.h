@@ -50,6 +50,10 @@ std::string skin_style_script(const std::string& url);
 // cannot be read.
 std::string store_player_script();
 
+// The first folder that contains `file_name`. The SteamTunes and SteamSkin
+// repos win on this machine. An installed copy is used when the repo is absent.
+std::wstring first_existing_marker(const std::wstring& primary, const std::wstring& fallback, const wchar_t* file_name);
+
 // The player UI with the store cover fallback applied. The SteamTunes
 // file on disk is not changed.
 std::string patched_player_ui_text();

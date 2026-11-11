@@ -90,6 +90,13 @@ bool is_doomnet_bootstrap(const std::wstring& path) {
 
 }  // namespace
 
+bool doomnet_hook_installed(const std::wstring& steam_folder) {
+    if (steam_folder.empty() || steam_folder.find(L"..") != std::wstring::npos) {
+        return false;
+    }
+    return is_doomnet_bootstrap(steam_folder + L"\\version.dll") || is_doomnet_bootstrap(steam_folder + L"\\wsock32.dll");
+}
+
 PlaceBootstrapResult place_doomnet_bootstrap(const std::wstring& steam_path, const std::wstring& dll_source, bool require_steam_closed) {
     PlaceBootstrapResult result;
     if (steam_path.empty() || dll_source.empty()) {
@@ -140,7 +147,19 @@ PlaceBootstrapResult place_doomnet_bootstrap(const std::wstring& steam_path, con
         return result;
     }
 
-    const std::wstring destination = steam_path + L"\\wsock32.dll";
+    const size_t source_slash = dll_source.find_last_of(L"\\/");
+    const std::wstring source_name = source_slash == std::wstring::npos ? dll_source : dll_source.substr(source_slash + 1);
+    const wchar_t* dest_name = nullptr;
+    if (_wcsicmp(source_name.c_str(), L"version.dll") == 0) {
+        dest_name = L"version.dll";
+    } else if (_wcsicmp(source_name.c_str(), L"wsock32.dll") == 0) {
+        dest_name = L"wsock32.dll";
+    } else {
+        result.detail = L"'" + dll_source + L"' is not version.dll or wsock32.dll, so nothing was copied beside steam.exe.";
+        log_event(L"error", L"inject", result.detail.c_str());
+        return result;
+    }
+    const std::wstring destination = steam_path + L"\\" + dest_name;
     const DWORD dest_attrs = GetFileAttributesW(destination.c_str());
     const bool dest_exists = dest_attrs != INVALID_FILE_ATTRIBUTES && (dest_attrs & FILE_ATTRIBUTE_DIRECTORY) == 0;
     if (dest_exists && is_millennium_bootstrap(destination)) {
@@ -159,10 +178,26 @@ PlaceBootstrapResult place_doomnet_bootstrap(const std::wstring& steam_path, con
         log_event(L"error", L"inject", result.detail.c_str());
         return result;
     }
+    if (_wcsicmp(dest_name, L"version.dll") == 0) {
+        const std::wstring late = steam_path + L"\\wsock32.dll";
+        if (is_doomnet_bootstrap(late)) {
+            if (!DeleteFileW(late.c_str())) {
+                result.detail = L"Copied '" + destination + L"', but could not remove the late '" + late + L"'. " + windows_error_text(GetLastError());
+                log_event(L"error", L"inject", result.detail.c_str());
+                return result;
+            }
+            log_event(L"info", L"inject", (L"Removed '" + late + L"' so Steam loads version.dll when steam.exe starts, before steamwebhelper.").c_str());
+        }
+    }
     result.ok = true;
     result.replaced = dest_exists;
-    result.detail = dest_exists ? L"Replaced DoomNet's bootstrap at '" + destination + L"'."
-                                : L"Copied DoomNet's bootstrap to '" + destination + L"'.";
+    if (dest_exists) {
+        result.detail = L"Replaced DoomNet's bootstrap at '" + destination + L"'.";
+    } else if (_wcsicmp(dest_name, L"version.dll") == 0) {
+        result.detail = L"Copied DoomNet's bootstrap to '" + destination + L"'. Steam loads version.dll as steam.exe starts, which is before steamwebhelper.";
+    } else {
+        result.detail = L"Copied DoomNet's bootstrap to '" + destination + L"'.";
+    }
     log_event(L"info", L"inject", result.detail.c_str());
     return result;
 }
@@ -424,9 +459,8 @@ InjectResult inject_running_client(const std::wstring& steam_exe) {
     }
     const std::wstring exe = full_path(steam_exe);
     const std::wstring folder = parent_dir(exe);
-    const std::wstring bootstrap = folder + L"\\wsock32.dll";
-    if (!is_doomnet_bootstrap(bootstrap)) {
-        result.detail = L"'" + bootstrap + L"' is not DoomNet's bootstrap, so the running Steam was not injected.";
+    if (!doomnet_hook_installed(folder)) {
+        result.detail = L"Neither version.dll nor wsock32.dll beside '" + exe + L"' is DoomNet's bootstrap, so the running Steam was not injected.";
         log_event(L"error", L"inject", result.detail.c_str());
         return result;
     }

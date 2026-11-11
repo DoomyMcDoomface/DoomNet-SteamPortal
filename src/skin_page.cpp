@@ -2,6 +2,7 @@
 
 #include "json_wire.h"
 #include "log.h"
+#include "paths.h"
 #include "text.h"
 #include "wide_io.h"
 
@@ -293,6 +294,25 @@ bool skin_player_requested() {
     return g_player;
 }
 
+std::wstring first_existing_marker(const std::wstring& primary, const std::wstring& fallback, const wchar_t* file_name) {
+    const std::wstring name = file_name == nullptr ? L"" : file_name;
+    if (!primary.empty() && !name.empty() && wide_file_exists(primary + L"\\" + name)) {
+        return primary;
+    }
+    if (!fallback.empty() && !name.empty() && wide_file_exists(fallback + L"\\" + name)) {
+        return fallback;
+    }
+    return primary;
+}
+
+std::wstring player_asset_dir() {
+    std::wstring root;
+    std::wstring error;
+    data_root(root, error);
+    const std::wstring installed = root.empty() ? L"" : root + L"\\player\\backend\\assets\\frontend";
+    return first_existing_marker(L"D:\\Documents\\Repos\\SteamTunes\\backend\\assets\\frontend", installed, L"steam-music-player.js");
+}
+
 std::string skin_tags_for_document(const std::string& url) {
     if (url.find("checkout.steampowered.com") != std::string::npos) {
         return {};
@@ -324,7 +344,7 @@ std::string skin_tags_for_document(const std::string& url) {
 }
 
 std::string patched_player_ui_text() {
-    const std::wstring dir = L"D:\\Documents\\Repos\\SteamTunes\\backend\\assets\\frontend";
+    const std::wstring dir = player_asset_dir();
     std::string ui = read_skin_text(dir, "steam-music-player.js");
     if (ui.empty()) {
         return {};
@@ -662,6 +682,77 @@ std::string patched_player_ui_text() {
         ui.replace(subtabs_end_at, old_subtabs_end.size(), new_subtabs_end);
     } else {
         log_event(L"warn", L"inject", L"The player UI did not build the Artist row, so its artwork and listening-party controls have nowhere to sit.");
+    }
+
+    const std::string old_library_label =
+        "\t\t\t\tvar btn = el(\"button\", \"smp-subtab\" + (!UI.libraryDrill && UI.libraryGroupBy === mode.key ? \" active\" : \"\"), {\n"
+        "\t\t\t\t\ttext: mode.label,\n";
+    const std::string new_library_label =
+        "\t\t\t\tvar btn = el(\"button\", \"smp-subtab\" + (!UI.libraryDrill && UI.libraryGroupBy === mode.key ? \" active\" : \"\"), {\n"
+        "\t\t\t\t\ttext: UI.doomnetLibraryTabLabel(mode),\n";
+    const size_t library_label_at = ui.find(old_library_label);
+    if (library_label_at != std::string::npos) {
+        ui.replace(library_label_at, old_library_label.size(), new_library_label);
+    } else {
+        log_event(L"warn", L"inject", L"The player UI did not label the library tabs, so a listener session cannot rename Now Playing.");
+    }
+    const std::string old_nowplaying_pane =
+        "\t\t\tif (UI.libraryGroupBy === \"nowplaying\") {\n"
+        "\t\t\t\tUI.renderNowPlayingTab(pane);\n"
+        "\t\t\t\treturn;\n"
+        "\t\t\t}\n";
+    const std::string new_nowplaying_pane =
+        "\t\t\tif (UI.libraryGroupBy === \"nowplaying\") {\n"
+        "\t\t\t\tif (UI.doomnetListenerParty()) {\n"
+        "\t\t\t\t\tUI.doomnetRenderParty(pane);\n"
+        "\t\t\t\t\treturn;\n"
+        "\t\t\t\t}\n"
+        "\t\t\t\tUI.renderNowPlayingTab(pane);\n"
+        "\t\t\t\treturn;\n"
+        "\t\t\t}\n";
+    const size_t nowplaying_pane_at = ui.find(old_nowplaying_pane);
+    if (nowplaying_pane_at != std::string::npos) {
+        ui.replace(nowplaying_pane_at, old_nowplaying_pane.size(), new_nowplaying_pane);
+    } else {
+        log_event(L"warn", L"inject", L"The player UI did not render Now Playing, so a listener session has nowhere to replace it.");
+    }
+    const std::string old_settings_tabs =
+        "\t\t\t\t{ key: \"troubleshooting\", label: \"Troubleshooting\" },\n"
+        "\t\t\t].forEach(function (tab) {\n";
+    const std::string new_settings_tabs =
+        "\t\t\t\t{ key: \"troubleshooting\", label: \"Troubleshooting\" },\n"
+        "\t\t\t];\n"
+        "\t\t\tif (window.__doomnetTabHost) {\n"
+        "\t\t\t\tsettingsTabList.push({ key: \"store\", label: \"Store\" });\n"
+        "\t\t\t}\n"
+        "\t\t\tsettingsTabList.forEach(function (tab) {\n";
+    const size_t settings_tabs_at = ui.find(old_settings_tabs);
+    if (settings_tabs_at != std::string::npos) {
+        const size_t array_at = ui.rfind("\t\t\t[\n", settings_tabs_at);
+        if (array_at != std::string::npos && settings_tabs_at - array_at < 400) {
+            ui.replace(array_at, std::string("\t\t\t[\n").size(), "\t\t\tvar settingsTabList = [\n");
+        }
+        const size_t tabs_again = ui.find(old_settings_tabs);
+        ui.replace(tabs_again, old_settings_tabs.size(), new_settings_tabs);
+    } else {
+        log_event(L"warn", L"inject", L"The player UI did not build the settings tabs, so Store has nowhere to sit.");
+    }
+    const std::string old_settings_route =
+        "\t\t\tif (UI.settingsSubtab === \"troubleshooting\") {\n"
+        "\t\t\t\tUI.renderTroubleshootingSettings(view);\n"
+        "\t\t\t\treturn;\n"
+        "\t\t\t}\n";
+    const std::string new_settings_route =
+        old_settings_route +
+        "\t\t\tif (UI.settingsSubtab === \"store\") {\n"
+        "\t\t\t\tUI.doomnetRenderStore(view);\n"
+        "\t\t\t\treturn;\n"
+        "\t\t\t}\n";
+    const size_t settings_route_at = ui.find(old_settings_route);
+    if (settings_route_at != std::string::npos) {
+        ui.replace(settings_route_at, old_settings_route.size(), new_settings_route);
+    } else {
+        log_event(L"warn", L"inject", L"The player UI did not route the settings tabs, so Store cannot open.");
     }
     const std::string old_seek_step =
         "\t\t\t\tmax: String(duration > 0 ? duration : 1),\n"
@@ -3086,6 +3177,9 @@ std::string patched_player_ui_text() {
 				return Promise.reject(new Error("StreamTunes service is not available"));
 			}
 			if (action === "start") {
+				if (UI.doomnetListenerParty()) {
+					return Promise.reject(new Error("Leave the current party before starting one"));
+				}
 				if (!App.engine) {
 					Engine.init();
 				}
@@ -3101,6 +3195,17 @@ std::string patched_player_ui_text() {
 				if (action === "leave" && App.engine && App.engine.doomnetDetachRemoteStream) {
 					App.engine.doomnetDetachRemoteStream();
 				}
+				if (action === "join" || action === "leave") {
+					var next = UI.doomnetPartySnapshot();
+					if (action === "leave" || (next.active && next.role === "listener")) {
+						UI.doomnetPartyPage = false;
+						UI.libraryGroupBy = "nowplaying";
+						UI.libraryDrill = null;
+					}
+				}
+				if (action === "leave") {
+					UI.doomnetRestoreLocalPlayback();
+				}
 				UI.safely("renderLibrary", UI.renderLibrary);
 			}).catch(function (err) {
 				if (action === "start" && App.engine && App.engine.doomnetDetachStream) {
@@ -3112,7 +3217,7 @@ std::string patched_player_ui_text() {
 		},
 
 		doomnetOpenParty: function (startHost) {
-			if (!UI.doomnetPartyService()) {
+			if (!UI.doomnetPartyService() || (startHost && UI.doomnetListenerParty())) {
 				return;
 			}
 			if (!UI.doomnetPartyPage) {
@@ -3140,12 +3245,98 @@ std::string patched_player_ui_text() {
 			}
 			UI._doomnetPartyBound = true;
 			service.subscribe(function () {
-				if (UI.doomnetPartyPage || (UI.root && UI.root.querySelector(".doomnet-party-slot"))) {
+				var listening = UI.doomnetListenerParty();
+				if (listening && !UI._doomnetListening) {
+					UI.doomnetPartyPage = false;
+					UI.libraryGroupBy = "nowplaying";
+					UI.libraryDrill = null;
+				}
+				UI._doomnetListening = listening;
+				if (listening || UI.doomnetPartyPage || (UI.root && UI.root.querySelector(".doomnet-party-slot"))) {
 					UI.safely("renderLibrary", UI.renderLibrary);
 				}
 			});
 		},
 
+		doomnetListenerParty: function () {
+			var state = UI.doomnetPartySnapshot();
+			return !!(state.active && state.role === "listener");
+		},
+
+		doomnetLibraryTabLabel: function (mode) {
+			if (mode && mode.key === "nowplaying" && UI.doomnetListenerParty()) {
+				return "Listening Party";
+			}
+			return mode ? mode.label : "";
+		},
+
+		doomnetRestoreLocalPlayback: function () {
+			var engine = App.engine;
+			if (!engine || typeof engine.play !== "function" || engine.doomnetRemoteActive) {
+				return;
+			}
+			if (engine.currentSource || (App.playerState && App.playerState.currentTrackId)) {
+				try { engine.play(); } catch (error) {}
+			}
+		},
+
+		doomnetLeaveSession: function () {
+			UI.doomnetPartyAction("leave").catch(function () {});
+		},
+
+		doomnetRenderStore: function (view) {
+			if (!view || !window.__doomnetTabHost) {
+				return;
+			}
+			var catalog = window.__doomnetStore && Array.isArray(window.__doomnetStore.apps) ? window.__doomnetStore.apps : [{
+				id: "steamskin",
+				name: "SteamSkin",
+				installed: false,
+				version: "",
+			}];
+			var page = el("div", "doomnet-store");
+			page.appendChild(el("div", "doomnet-store-title", { text: "Store" }));
+			page.appendChild(el("div", "doomnet-store-hint", { text: "Apps install beside the player. The player's saved color stays as it is." }));
+			catalog.forEach(function (app) {
+				var row = el("div", "doomnet-store-row");
+				var names = el("div", "doomnet-store-namecol");
+				names.appendChild(el("div", "doomnet-store-name", { text: String(app.name || "App") }));
+				var version = String(app.version || "");
+				names.appendChild(el("div", "doomnet-store-version", {
+					text: app.installed ? (version ? "Installed " + version : "Installed") : "Not installed",
+				}));
+				row.appendChild(names);
+				if (app.id === "steamskin") {
+					var button = el("button", "smp-btn doomnet-store-install", { type: "button", text: "Install" });
+					if (app.installed) {
+						button.disabled = true;
+						button.title = "SteamSkin is already installed";
+					}
+					button.addEventListener("click", function () {
+						if (button.disabled) {
+							return;
+						}
+						var call = window.Millennium && window.Millennium.callServerMethod;
+						if (typeof call !== "function") {
+							UI.showToast("SteamSkin could not be installed because the page is not connected to DoomNet.", 8000);
+							return;
+						}
+						button.disabled = true;
+						button.title = "SteamSkin is already installed";
+						call("SteamMusicPlayer", "doomnet_install_app", ["steamskin"]).then(function (message) {
+							UI.showToast(String(message || "SteamSkin was installed. Steam will restart so the skin can load."), 8000);
+						}, function (error) {
+							button.disabled = false;
+							button.title = "";
+							UI.showToast(String((error && error.message) || error || "SteamSkin was not installed."), 8000);
+						});
+					});
+					row.appendChild(button);
+				}
+				page.appendChild(row);
+			});
+			view.appendChild(page);
+		},
 		doomnetMountPartySlot: function (row) {
 			var service = UI.doomnetPartyService();
 			if (!row || !service || !window.__doomnetTabHost) {
@@ -3154,28 +3345,32 @@ std::string patched_player_ui_text() {
 			UI.doomnetBindParty();
 			var state = UI.doomnetPartySnapshot();
 			var slot = el("div", "doomnet-party-slot");
-			function button(text, className, click) {
+			function button(text, className, click, enabled) {
 				var btn = el("button", "smp-subtab doomnet-party-button" + (className ? " " + className : ""), {
 					type: "button",
 					text: text,
 				});
-				btn.addEventListener("click", click);
+				btn.disabled = enabled === false;
+				if (btn.disabled) {
+					btn.title = "Leave the current party before starting one";
+				} else {
+					btn.addEventListener("click", click);
+				}
 				slot.appendChild(btn);
 			}
 			if (!state.active) {
-				button("Start Listening Party", "", function () { UI.doomnetOpenParty(true); });
+				button("Start Listening Party", "", function () { UI.doomnetOpenParty(true); }, true);
 			} else if (state.role === "host") {
 				button("End Party", "is-danger", function () {
 					UI.doomnetPartyAction("end").then(UI.doomnetCloseParty).catch(function () {});
-				});
-				button("Configure Party", "", function () { UI.doomnetOpenParty(false); });
-			} else {
-				button("Leave Party", "is-danger", function () {
-					UI.doomnetPartyAction("leave").then(UI.doomnetCloseParty).catch(function () {});
-				});
-				button("Configure Party", "", function () { UI.doomnetOpenParty(false); });
+				}, true);
+				button("Configure Party", "", function () { UI.doomnetOpenParty(false); }, true);
+			} else if (state.role === "listener") {
+				button("Start Listening Party", "", function () {}, false);
 			}
-			row.appendChild(slot);
+			if (slot.childElementCount) {
+				row.appendChild(slot);
+			}
 		},
 
 		doomnetCopyPartyCode: function (code) {
@@ -3197,9 +3392,11 @@ std::string patched_player_ui_text() {
 				return;
 			}
 			var state = UI.doomnetPartySnapshot();
-			var activeTab = UI.root && UI.root.querySelector(".smp-view-library > .smp-subtabs .smp-subtab.active");
-			if (activeTab) {
-				activeTab.classList.remove("active");
+			if (UI.doomnetPartyPage) {
+				var activeTab = UI.root && UI.root.querySelector(".smp-view-library > .smp-subtabs .smp-subtab.active");
+				if (activeTab) {
+					activeTab.classList.remove("active");
+				}
 			}
 			pane.innerHTML = "";
 			var page = el("div", "doomnet-party-page");
@@ -3219,10 +3416,10 @@ std::string patched_player_ui_text() {
 			if (state.role === "listener" && state.active) {
 				var leave = el("button", "smp-btn smp-btn-danger doomnet-party-end", {
 					type: "button",
-					text: "Leave Party",
+					text: "Leave Session",
 				});
 				leave.addEventListener("click", function () {
-					UI.doomnetPartyAction("leave").then(UI.doomnetCloseParty).catch(function () {});
+					UI.doomnetLeaveSession();
 				});
 				page.appendChild(leave);
 			} else {
@@ -3417,11 +3614,116 @@ std::string patched_player_ui_text() {
     } else {
         log_event(L"warn", L"inject", L"The player UI did not contain the Media Keys setting, so Global Control was not added.");
     }
+    const std::string old_add =
+        "\t\t\tvar addBtn = el(\"button\", \"smp-btn\", { text: \"Add Folder\" });\n"
+        "\t\t\taddBtn.addEventListener(\"click\", function () {\n"
+        "\t\t\t\tpicker.click();\n"
+        "\t\t\t});\n";
+    const std::string new_add =
+        "\t\t\tvar addBtn = el(\"button\", \"smp-btn\", { text: \"Add Folder\" });\n"
+        "\t\t\taddBtn.addEventListener(\"click\", function () {\n"
+        "\t\t\t\taddBtn.disabled = true;\n"
+        "\t\t\t\taddBtn.textContent = \"Choose a folder...\";\n"
+        "\t\t\t\tcallServer(\"pick_music_folder\").then(function (folderPath) {\n"
+        "\t\t\t\t\tif (!folderPath) {\n"
+        "\t\t\t\t\t\taddBtn.disabled = false;\n"
+        "\t\t\t\t\t\taddBtn.textContent = \"Add Folder\";\n"
+        "\t\t\t\t\t\treturn;\n"
+        "\t\t\t\t\t}\n"
+        "\t\t\t\t\treturn callServer(\"add_music_folder\", [folderPath]).then(function () {\n"
+        "\t\t\t\t\t\treturn callServer(\"get_music_folders\");\n"
+        "\t\t\t\t\t}).then(function (folders) {\n"
+        "\t\t\t\t\t\tUI.applyFolders(folders);\n"
+        "\t\t\t\t\t\tUI.safely(\"renderSettingsView\", UI.renderSettingsView);\n"
+        "\t\t\t\t\t\tUI.scanNewOnly = false;\n"
+        "\t\t\t\t\t\treturn UI.runScanExclusive(function (progress) {\n"
+        "\t\t\t\t\t\t\tUI.applyScanProgress(progress);\n"
+        "\t\t\t\t\t\t\tUI.safely(\"renderSettingsView\", UI.renderSettingsView);\n"
+        "\t\t\t\t\t\t}, true);\n"
+        "\t\t\t\t\t});\n"
+        "\t\t\t\t}).catch(function (err) {\n"
+        "\t\t\t\t\taddBtn.disabled = false;\n"
+        "\t\t\t\t\taddBtn.textContent = \"Add Folder\";\n"
+        "\t\t\t\treportError(\"add_music_folder failed: \" + (err && err.message ? err.message : err));\n"
+        "\t\t\t\t\twindow.alert(\"Couldn't add that folder. \" + (err && err.message ? err.message : \"The player did not answer.\"));\n"
+        "\t\t\t\t});\n"
+        "\t\t\t});\n";
+    const size_t add_at = ui.find(old_add);
+    if (add_at == std::string::npos) {
+        log_event(L"warn", L"inject", L"Add Folder still asks the page for a path, so a chosen music folder is not saved and the scan has nothing to read.");
+    } else {
+        ui.replace(add_at, old_add.size(), new_add);
+    }
+    const std::string old_hint = "Add the folder where you keep your music. The player finds tracks in the folders you add here, and playlist files (M3U, M3U8, PLS) in those folders show up under Playlists.";
+    const std::string new_hint = "Add Folder opens a Windows folder chooser and saves that folder. The scan reads the files in it and every folder inside it. Playlist files (M3U, M3U8, PLS) in those folders show up under Playlists.";
+    const size_t hint_at = ui.find(old_hint);
+    if (hint_at == std::string::npos) {
+        log_event(L"warn", L"inject", L"The music-folder hint still describes the old chooser, so it does not say the scan reads folders inside the chosen folder.");
+    } else {
+        ui.replace(hint_at, old_hint.size(), new_hint);
+    }
+    const std::string old_listing_text =
+        "\t\t\t\tApp.scanStatusText = (UI.scanNewOnly ? \"Looking for new tracks\\u2026\" : \"Finding audio files\\u2026\")\n"
+        "\t\t\t\t\t+ (seen ? \" \" + seen + \" files seen\" : \"\");\n";
+    const std::string new_listing_text =
+        "\t\t\t\tApp.scanProgress.folder = progress.folder || App.scanProgress.folder || \"\";\n"
+        "\t\t\t\tApp.scanStatusText = (UI.scanNewOnly ? \"Looking for new tracks\\u2026\" : \"Finding audio files\\u2026\")\n"
+        "\t\t\t\t\t+ (App.scanProgress.folder ? \" in \" + App.scanProgress.folder + \" and the folders inside it\" : \"\")\n"
+        "\t\t\t\t\t+ (seen ? \" \" + seen + \" files seen\" : \"\");\n";
+    const size_t listing_text_at = ui.find(old_listing_text);
+    if (listing_text_at == std::string::npos) {
+        log_event(L"warn", L"inject", L"The scan progress line does not name the music folder, so it looks the same whether or not a folder is being read.");
+    } else {
+        ui.replace(listing_text_at, old_listing_text.size(), new_listing_text);
+    }
+    const std::string old_banner =
+        "\t\t\t\tlabel = UI.scanNewOnly ? \"Looking for new tracks\xE2\x80\xA6\" : \"Finding audio files\xE2\x80\xA6\";\n"
+        "\t\t\t\tif (progress.totalFiles > 0) {\n"
+        "\t\t\t\t\tlabel += \" \" + progress.totalFiles + \" files seen\";\n"
+        "\t\t\t\t}\n";
+    const std::string new_banner =
+        "\t\t\t\tlabel = (UI.scanNewOnly ? \"Looking for new tracks\xE2\x80\xA6\" : \"Finding audio files\xE2\x80\xA6\")\n"
+        "\t\t\t\t\t+ (progress.folder ? \" in \" + progress.folder + \" and the folders inside it\" : \"\");\n"
+        "\t\t\t\tif (progress.totalFiles > 0) {\n"
+        "\t\t\t\t\tlabel += \" \" + progress.totalFiles + \" files seen\";\n"
+        "\t\t\t\t}\n";
+    const size_t banner_at = ui.find(old_banner);
+    if (banner_at == std::string::npos) {
+        log_event(L"warn", L"inject", L"The scan banner does not name the music folder, so it looks the same whether or not a folder is being read.");
+    } else {
+        ui.replace(banner_at, old_banner.size(), new_banner);
+    }
+    const std::string old_emit_list =
+        "\t\t\t\t\t\t\t\ttotalFiles: batchInfo.totalFiles || 0,\n"
+        "\t\t\t\t\t\t\t\tdirsDone: batchInfo.dirsDone || 0,\n";
+    const std::string new_emit_list =
+        "\t\t\t\t\t\t\t\ttotalFiles: batchInfo.totalFiles || 0,\n"
+        "\t\t\t\t\t\t\t\tdirsDone: batchInfo.dirsDone || 0,\n"
+        "\t\t\t\t\t\t\t\tfolder: batchInfo.folder || \"\",\n";
+    const size_t emit_list_at = ui.find(old_emit_list);
+    if (emit_list_at == std::string::npos) {
+        log_event(L"warn", L"inject", L"A listing update drops the music folder, so the progress line cannot name it.");
+    } else {
+        ui.replace(emit_list_at, old_emit_list.size(), new_emit_list);
+    }
+    const std::string old_emit_start =
+        "\t\t\t\t\t\ttotalFiles: startInfo.totalFiles || 0,\n"
+        "\t\t\t\t\t\tremaining: startInfo.pendingCount || 0,\n";
+    const std::string new_emit_start =
+        "\t\t\t\t\t\ttotalFiles: startInfo.totalFiles || 0,\n"
+        "\t\t\t\t\t\tremaining: startInfo.pendingCount || 0,\n"
+        "\t\t\t\t\t\tfolder: startInfo.folder || \"\",\n";
+    const size_t emit_start_at = ui.find(old_emit_start);
+    if (emit_start_at == std::string::npos) {
+        log_event(L"warn", L"inject", L"The first scan update drops the music folder, so the progress line cannot name it.");
+    } else {
+        ui.replace(emit_start_at, old_emit_start.size(), new_emit_start);
+    }
     return ui;
 }
 
 std::string patched_player_audio_engine_text() {
-    const std::wstring dir = L"D:\\Documents\\Repos\\SteamTunes\\backend\\assets\\frontend";
+    const std::wstring dir = player_asset_dir();
     std::string engine = read_skin_text(dir, "audio-engine.js");
     if (engine.empty()) {
         return {};
@@ -3595,7 +3897,7 @@ std::string patched_player_audio_engine_text() {
 }
 
 std::string patched_player_css_text() {
-    const std::wstring dir = L"D:\\Documents\\Repos\\SteamTunes\\backend\\assets\\frontend";
+    const std::wstring dir = player_asset_dir();
     std::string css = read_skin_text(dir, "steam-music-player.css");
     if (css.empty()) {
         return {};
@@ -3727,6 +4029,7 @@ std::string patched_player_css_text() {
         ".smp-folder-path{flex:0 1 auto;min-width:0;}\n"
         "#doomnet-steamtunes-host .doomnet-party-slot{display:flex;align-items:center;gap:4px;margin-left:auto;}\n"
         "#doomnet-steamtunes-host .doomnet-party-button.is-danger{color:var(--smp-danger,#c0392b);}\n"
+        "#doomnet-steamtunes-host .doomnet-party-button:disabled{opacity:0.4;cursor:default;}\n"
         "#doomnet-steamtunes-host .doomnet-party-page{display:flex;flex-direction:column;align-items:center;width:min(760px,100%);margin:32px auto 0;padding:24px;box-sizing:border-box;}\n"
         "#doomnet-steamtunes-host .doomnet-party-title{color:var(--smp-text);font-size:22px;font-weight:600;}\n"
         "#doomnet-steamtunes-host .doomnet-party-count{margin-top:12px;color:var(--smp-text-dim);font-size:15px;font-variant-numeric:tabular-nums;}\n"
@@ -3738,6 +4041,14 @@ std::string patched_player_css_text() {
         "#doomnet-steamtunes-host .doomnet-party-peer{cursor:default;}\n"
         "#doomnet-steamtunes-host .doomnet-party-join{display:flex;align-items:center;gap:8px;margin-top:24px;}\n"
         "#doomnet-steamtunes-host .doomnet-party-join-code{width:220px;flex:0 1 220px;text-transform:uppercase;letter-spacing:0.08em;}\n"
+        "#doomnet-steamtunes-host .doomnet-store{width:min(720px,100%);margin:24px auto 0;padding:8px 16px 24px;box-sizing:border-box;}\n"
+        "#doomnet-steamtunes-host .doomnet-store-title{color:var(--smp-text);font-size:22px;font-weight:600;}\n"
+        "#doomnet-steamtunes-host .doomnet-store-hint{margin:8px 0 18px;color:var(--smp-text-dim);font-size:13px;}\n"
+        "#doomnet-steamtunes-host .doomnet-store-row{display:flex;align-items:center;gap:12px;padding:12px 0;border-top:1px solid var(--smp-border);}\n"
+        "#doomnet-steamtunes-host .doomnet-store-namecol{min-width:0;flex:1 1 auto;}\n"
+        "#doomnet-steamtunes-host .doomnet-store-name{color:var(--smp-text);font-size:16px;}\n"
+        "#doomnet-steamtunes-host .doomnet-store-version{margin-top:2px;color:var(--smp-text-dim);font-size:12px;}\n"
+        "#doomnet-steamtunes-host .doomnet-store-install:disabled{opacity:0.4;cursor:default;}\n"
         "html.smp-ctx-overlay .smp-setting-block{padding:12px 0;}\n"
         "html.smp-ctx-overlay .smp-feature-block{margin-top:0;padding:12px 0;}\n"
         "html.smp-ctx-overlay .smp-settings-row,html.smp-ctx-overlay .smp-setting-block .smp-settings-row{display:flex;align-items:center;flex-wrap:nowrap;gap:12px;margin:0;}\n"
@@ -3769,7 +4080,7 @@ std::string store_player_script() {
     if (!cached.empty()) {
         return cached;
     }
-    const std::wstring dir = L"D:\\Documents\\Repos\\SteamTunes\\backend\\assets\\frontend";
+    const std::wstring dir = player_asset_dir();
     const std::string css = patched_player_css_text();
     const std::string mix = read_skin_text(dir, "mix-image.js");
     const std::string engine = patched_player_audio_engine_text();

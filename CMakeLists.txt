@@ -97,6 +97,7 @@ set(DOOMNET_CORE
     src/stream.cpp
     src/streamtunes_identity.cpp
     src/host_fs.cpp
+    src/folder_pick.cpp
     src/host_io.cpp
     src/process_job.cpp
     src/text.cpp
@@ -106,6 +107,8 @@ set(DOOMNET_CORE
     src/host_millennium.cpp
     src/toggle.cpp
     src/installer.cpp
+    src/update_gate.cpp
+    src/catalog.cpp
     src/wide_io.cpp
     src/launch.cpp
     src/shortcut.cpp
@@ -169,9 +172,16 @@ endif()
 add_library(doomnet_wsock32 SHARED src/bootstrap/wsock32.cpp)
 target_link_libraries(doomnet_wsock32 PRIVATE doomnet_minhook)
 set_target_properties(doomnet_wsock32 PROPERTIES OUTPUT_NAME "wsock32")
+# version.dll is a normal import of steam.exe, so it loads before steamwebhelper.
+# wsock32.dll is delay-loaded and misses that launch. The same hook is linked here.
+add_library(doomnet_version SHARED src/bootstrap/wsock32.cpp src/bootstrap/version_proxy.cpp src/bootstrap/export.version.def)
+target_link_libraries(doomnet_version PRIVATE doomnet_minhook)
+set_target_properties(doomnet_version PROPERTIES OUTPUT_NAME "version")
 if(MSVC)
     target_compile_options(doomnet_wsock32 PRIVATE /W4 /WX /utf-8 /EHsc /guard:cf)
     target_link_options(doomnet_wsock32 PRIVATE /GUARD:CF /DYNAMICBASE /NXCOMPAT /HIGHENTROPYVA)
+    target_compile_options(doomnet_version PRIVATE /W4 /WX /utf-8 /EHsc /guard:cf)
+    target_link_options(doomnet_version PRIVATE /GUARD:CF /DYNAMICBASE /NXCOMPAT /HIGHENTROPYVA)
 endif()
 
 add_library(doomnet_fake_steamui SHARED src/bootstrap/fake_steamui.cpp)
@@ -225,10 +235,10 @@ doomnet_apply(DoomNet)
 doomnet_apply(DoomNetFoundationTests)
 doomnet_apply(DoomNetHostTests)
 doomnet_apply(DoomNetLiveProof)
-add_dependencies(DoomNet doomnet_boot doomnet_streamtunes_client)
+add_dependencies(DoomNet doomnet_boot doomnet_streamtunes_client doomnet_version)
 add_dependencies(DoomNetFoundationTests doomnet_boot doomnet_streamtunes_client)
-add_dependencies(DoomNetFoundationTests doomnet_wsock32)
-add_dependencies(DoomNetFoundationTests DoomNetFakeSteam)
+add_dependencies(DoomNetFoundationTests doomnet_wsock32 doomnet_version)
+add_dependencies(DoomNetFoundationTests DoomNetDummyChild DoomNetFakeSteam)
 add_dependencies(DoomNetFoundationTests DoomNetFakeWebHelper)
 add_dependencies(DoomNetFoundationTests doomnet_fake_steamui)
 add_dependencies(DoomNetHostTests doomnet_boot doomnet_streamtunes_client)

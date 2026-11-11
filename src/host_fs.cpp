@@ -136,6 +136,24 @@ int bad_path_pair(lua_State* L, int index) {
     return 2;
 }
 
+bool windows_says_directory(const std::wstring& path) {
+    if (path.empty()) {
+        return false;
+    }
+    const DWORD attrs = GetFileAttributesW(path.c_str());
+    return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) != 0;
+}
+
+bool entry_is_directory(const fsn::directory_entry& entry) {
+    std::error_code ec;
+    if (entry.is_directory(ec)) {
+        return true;
+    }
+    // A cloud placeholder can fail the C++ status check and still be a folder.
+    // The library walk uses this flag to decide whether to keep going.
+    return windows_says_directory(entry.path().native());
+}
+
 // Boolean queries answer false for anything that is not a path. Millennium
 // raised for a non-string, which only turned a missing value into a stack trace.
 int boolean_query(lua_State* L, bool (*check)(const fsn::path&, std::error_code&)) {
@@ -156,7 +174,18 @@ int Lua_exists(lua_State* L) {
     return boolean_query(L, [](const fsn::path& p, std::error_code& ec) { return fsn::exists(p, ec); });
 }
 int Lua_is_directory(lua_State* L) {
-    return boolean_query(L, [](const fsn::path& p, std::error_code& ec) { return fsn::is_directory(p, ec); });
+    std::wstring wide;
+    if (!try_wide_path(L, 1, wide)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    std::error_code ec;
+    if (fsn::is_directory(fsn::path(wide), ec) || windows_says_directory(wide)) {
+        lua_pushboolean(L, 1);
+        return 1;
+    }
+    lua_pushboolean(L, 0);
+    return 1;
 }
 int Lua_is_file(lua_State* L) {
     return boolean_query(L, [](const fsn::path& p, std::error_code& ec) { return fsn::is_regular_file(p, ec); });
@@ -249,7 +278,7 @@ int Lua_list(lua_State* L) {
         lua_setfield(L, -2, "name");
         push_path(L, entry.path());
         lua_setfield(L, -2, "path");
-        lua_pushboolean(L, entry.is_directory(entry_ec));
+        lua_pushboolean(L, entry_is_directory(entry));
         lua_setfield(L, -2, "is_directory");
         const bool is_file = entry.is_regular_file(entry_ec);
         lua_pushboolean(L, is_file);
@@ -300,7 +329,7 @@ int Lua_list_recursive(lua_State* L) {
         lua_setfield(L, -2, "name");
         push_path(L, entry.path());
         lua_setfield(L, -2, "path");
-        lua_pushboolean(L, entry.is_directory(entry_ec));
+        lua_pushboolean(L, entry_is_directory(entry));
         lua_setfield(L, -2, "is_directory");
         lua_pushboolean(L, entry.is_regular_file(entry_ec));
         lua_setfield(L, -2, "is_file");
@@ -1252,6 +1281,87 @@ std::string patched_player_module(const std::string& module, std::string source)
         } else {
             source.replace(lists_at, old_lists.size(), new_lists);
         }
+        const std::string old_rescan_json =
+            "\t\tplaylistsUpdated = result.playlistsUpdated or 0,\n"
+            "\t})\n"
+            "end\n"
+            "\n"
+            "function scan_library_batch(batchSize)\n";
+        const std::string new_rescan_json =
+            "\t\tplaylistsUpdated = result.playlistsUpdated or 0,\n"
+            "\t\tfolder = result.folder or \"\",\n"
+            "\t\tdirsDone = result.dirsDone or 0,\n"
+            "\t})\n"
+            "end\n"
+            "\n"
+            "function scan_library_batch(batchSize)\n";
+        const size_t rescan_json_at = source.find(old_rescan_json);
+        if (rescan_json_at == std::string::npos) {
+            log_event(L"warn", L"lua", L"The scan start result does not name the music folder, so the page cannot show which folder is being read.");
+        } else {
+            source.replace(rescan_json_at, old_rescan_json.size(), new_rescan_json);
+        }
+        const std::string old_batch_json =
+            "\t\tplaylistsUpdated = result.playlistsUpdated or 0,\n"
+            "\t\tlastPath = result.lastPath, -- TEMPORARY: crash-diagnosis aid\n";
+        const std::string new_batch_json =
+            "\t\tplaylistsUpdated = result.playlistsUpdated or 0,\n"
+            "\t\tfolder = result.folder or \"\",\n"
+            "\t\tdirsDone = result.dirsDone or 0,\n"
+            "\t\tlastPath = result.lastPath, -- TEMPORARY: crash-diagnosis aid\n";
+        const size_t batch_json_at = source.find(old_batch_json);
+        if (batch_json_at == std::string::npos) {
+            log_event(L"warn", L"lua", L"A scan batch does not name the music folder, so the page cannot show which folder is being read.");
+        } else {
+            source.replace(batch_json_at, old_batch_json.size(), new_batch_json);
+        }
+        const std::string old_stage =
+            "\tif not track or not track.path then\n"
+            "\t\tlibrary.play_log(\"stage unknown id=\" .. tostring(trackId))\n"
+            "\t\treturn json.encode({ ok = false, error = \"unknown track\" })\n"
+            "\tend\n"
+            "\tif not mediaState.prepared then\n";
+        const std::string new_stage =
+            "\tif not track or not track.path then\n"
+            "\t\tlibrary.play_log(\"stage unknown id=\" .. tostring(trackId))\n"
+            "\t\treturn json.encode({ ok = false, error = \"unknown track\" })\n"
+            "\tend\n"
+            "\tif type(doomnet_stream_hook) == \"function\" and doomnet_stream_hook() then\n"
+            "\t\tlocal sizeOk, actual = pcall(fs.file_size, track.path)\n"
+            "\t\tlocal token = media_token()\n"
+            "\t\tif not sizeOk or type(actual) ~= \"number\" or actual < 0 or not token then\n"
+            "\t\t\tlibrary.play_log(\"stage direct failed id=\" .. tostring(track.id))\n"
+            "\t\t\treturn json.encode({ ok = false, error = \"the original file could not be read\" })\n"
+            "\t\tend\n"
+            "\t\tlibrary.play_log(\"stage direct id=\" .. tostring(track.id) .. \" bytes=\" .. tostring(actual))\n"
+            "\t\treturn json.encode({\n"
+            "\t\t\tok = true,\n"
+            "\t\t\turl = stage_url_base() .. url_encode_segment(tostring(track.id)),\n"
+            "\t\t\tsize = actual,\n"
+            "\t\t})\n"
+            "\tend\n"
+            "\tif not mediaState.prepared then\n";
+        const size_t stage_at = source.find(old_stage);
+        if (stage_at == std::string::npos) {
+            log_event(L"warn", L"lua", L"stage_track_for_playback was not patched, so a play will still copy the song into steamui.");
+        } else {
+            source.replace(stage_at, old_stage.size(), new_stage);
+        }
+        const std::string old_release =
+            "function release_staged_track(trackId)\n"
+            "\tlocal track = library.get_track(trackId)\n";
+        const std::string new_release =
+            "function release_staged_track(trackId)\n"
+            "\tif type(doomnet_stream_hook) == \"function\" and doomnet_stream_hook() then\n"
+            "\t\treturn json.encode({ ok = true })\n"
+            "\tend\n"
+            "\tlocal track = library.get_track(trackId)\n";
+        const size_t release_at = source.find(old_release);
+        if (release_at == std::string::npos) {
+            log_event(L"warn", L"lua", L"release_staged_track was not patched, so stopping a song may still delete a copied file.");
+        } else {
+            source.replace(release_at, old_release.size(), new_release);
+        }
         return source;
     }
     const std::string old_branch =
@@ -1717,6 +1827,134 @@ std::string patched_player_module(const std::string& module, std::string source)
                 from = found + new_worker.size();
             }
         }
+    }
+    const std::string old_gate = "\t\tif fs.exists(folder) and fs.is_directory(folder) then\n";
+    const std::string new_gate = "\t\tif fs.exists(folder) and (fs.is_directory(folder) or not fs.is_file(folder)) then\n";
+    const std::string old_list_gate =
+        "\tfor _, folder in ipairs(state.folders) do\n"
+        "\t\tif fs.exists(folder) and fs.is_directory(folder) then\n"
+        "\t\t\tlistJob.folders[#listJob.folders + 1] = folder\n"
+        "\t\tend\n"
+        "\tend\n"
+        "\tif #listJob.folders == 0 then\n";
+    const std::string new_list_gate =
+        "\tfor _, folder in ipairs(state.folders) do\n"
+        "\t\tif fs.exists(folder) and (fs.is_directory(folder) or not fs.is_file(folder)) then\n"
+        "\t\t\tlistJob.folders[#listJob.folders + 1] = folder\n"
+        "\t\telse\n"
+        "\t\t\tlogger:warn(\"[SteamMusicPlayer] music folder was not scanned because it is missing or not a folder: \" .. tostring(folder))\n"
+        "\t\tend\n"
+        "\tend\n"
+        "\tif #listJob.folders > 0 then\n"
+        "\t\tlistJob.currentFolder = listJob.folders[1]\n"
+        "\t\tlogger:info(\"[SteamMusicPlayer] scanning '\" .. tostring(listJob.folders[1]) .. \"' and every folder inside it. \" .. tostring(#listJob.folders) .. \" music folder(s) are configured.\")\n"
+        "\tend\n"
+        "\tif #listJob.folders == 0 then\n";
+    const size_t list_gate_at = source.find(old_list_gate);
+    if (list_gate_at == std::string::npos) {
+        log_event(L"warn", L"lua", L"The scan does not record which music folder it opened, so a saved folder can be skipped with no line in the log.");
+    } else {
+        source.replace(list_gate_at, old_list_gate.size(), new_list_gate);
+    }
+    size_t gate_from = 0;
+    while (gate_from < source.size()) {
+        const size_t found = source.find(old_gate, gate_from);
+        if (found == std::string::npos) {
+            break;
+        }
+        source.replace(found, old_gate.size(), new_gate);
+        gate_from = found + new_gate.size();
+    }
+    const std::string old_descend = "\t\t\t\t\t\t\tif (not dirOk) or isDir then\n";
+    const std::string new_descend = "\t\t\t\t\t\t\tif (type(entry) == \"table\" and not entry.is_file) or (not dirOk) or isDir then\n";
+    if (source.find(old_descend) == std::string::npos) {
+        log_event(L"warn", L"lua", L"The library walk still gives up on a child when the directory check returns false, so folders inside the music folder are skipped.");
+    } else {
+        size_t descend_from = 0;
+        while (descend_from < source.size()) {
+            const size_t found = source.find(old_descend, descend_from);
+            if (found == std::string::npos) {
+                break;
+            }
+            source.replace(found, old_descend.size(), new_descend);
+            descend_from = found + new_descend.size();
+        }
+    }
+    const std::string old_root_audio =
+        "\t\t\t\t\t\tif SUPPORTED_EXTENSIONS[file_extension(path)] then\n"
+        "\t\t\t\t\t\t\tresults[#results + 1] = path\n";
+    const std::string new_root_audio =
+        "\t\t\t\t\t\tif type(entry) == \"table\" and entry.is_directory then\n"
+        "\t\t\t\t\t\t\tstack[#stack + 1] = path\n"
+        "\t\t\t\t\t\telseif SUPPORTED_EXTENSIONS[file_extension(path)] then\n"
+        "\t\t\t\t\t\t\tresults[#results + 1] = path\n";
+    const std::string old_batch_audio =
+        "\t\t\t\t\t\tif SUPPORTED_EXTENSIONS[ext] then\n"
+        "\t\t\t\t\t\t\tresults[#results + 1] = path\n";
+    const std::string new_batch_audio =
+        "\t\t\t\t\t\tif type(entry) == \"table\" and entry.is_directory then\n"
+        "\t\t\t\t\t\t\twalkJob.stack[#walkJob.stack + 1] = path\n"
+        "\t\t\t\t\t\telseif SUPPORTED_EXTENSIONS[ext] then\n"
+        "\t\t\t\t\t\t\tresults[#results + 1] = path\n";
+    if (source.find(old_root_audio) == std::string::npos || source.find(old_batch_audio) == std::string::npos) {
+        log_event(L"warn", L"lua", L"The library walk still does not enter a listed folder before it looks at the file name, so a folder of songs is reported as empty.");
+    } else {
+        source.replace(source.find(old_root_audio), old_root_audio.size(), new_root_audio);
+        const size_t batch_audio_at = source.find(old_batch_audio);
+        if (batch_audio_at != std::string::npos) {
+            source.replace(batch_audio_at, old_batch_audio.size(), new_batch_audio);
+        }
+    }
+    const std::string old_walk_dir = "\t\tlocal dir = table.remove(walkJob.stack)\n\t\tif dir and not walkJob.seen[dir] then\n";
+    const std::string new_walk_dir = "\t\tlocal dir = table.remove(walkJob.stack)\n\t\tif dir and not walkJob.seen[dir] then\n\t\t\tlistJob.currentFolder = dir\n";
+    const size_t walk_dir_at = source.find(old_walk_dir);
+    if (walk_dir_at == std::string::npos) {
+        log_event(L"warn", L"lua", L"The scan does not remember the folder it is listing, so the page cannot name it.");
+    } else {
+        source.replace(walk_dir_at, old_walk_dir.size(), new_walk_dir);
+    }
+    const std::string old_status_folder =
+        "\t\tnewOnly = listJob.newOnly == true,\n"
+        "\t\tadded = scanState.addedThisScan or 0,\n"
+        "\t}\n";
+    const std::string new_status_folder =
+        "\t\tnewOnly = listJob.newOnly == true,\n"
+        "\t\tadded = scanState.addedThisScan or 0,\n"
+        "\t\tfolder = listJob.currentFolder or (listJob.folders and listJob.folders[1]) or (state.folders and state.folders[1]) or \"\",\n"
+        "\t\tdirsDone = walkJob.dirsDone or 0,\n"
+        "\t}\n";
+    const size_t status_folder_at = source.find(old_status_folder);
+    if (status_folder_at == std::string::npos) {
+        log_event(L"warn", L"lua", L"The scan status does not include the music folder, so the page can only show a generic progress line.");
+    } else {
+        source.replace(status_folder_at, old_status_folder.size(), new_status_folder);
+    }
+    const std::string old_listing_folder =
+        "\t\t\t\tdirsDone = walkJob.dirsDone,\n"
+        "\t\t\t\tpendingCount = 0,\n"
+        "\t\t\t\tadded = scanState.addedThisScan or 0,\n";
+    const std::string new_listing_folder =
+        "\t\t\t\tdirsDone = walkJob.dirsDone,\n"
+        "\t\t\t\tpendingCount = 0,\n"
+        "\t\t\t\tadded = scanState.addedThisScan or 0,\n"
+        "\t\t\t\tfolder = listJob.currentFolder or (listJob.folders and listJob.folders[1]) or (state.folders and state.folders[1]) or \"\",\n";
+    const size_t listing_folder_at = source.find(old_listing_folder);
+    if (listing_folder_at == std::string::npos) {
+        log_event(L"warn", L"lua", L"A listing batch does not name the music folder, so the page cannot show which folder is being read.");
+    } else {
+        source.replace(listing_folder_at, old_listing_folder.size(), new_listing_folder);
+    }
+    const std::string old_done_folder = "\t\tadded = scanState.addedThisScan or 0,\n\t\tlastPath = lastPath, -- TEMPORARY: crash-diagnosis aid\n";
+    const std::string new_done_folder =
+        "\t\tadded = scanState.addedThisScan or 0,\n"
+        "\t\tfolder = listJob.currentFolder or (listJob.folders and listJob.folders[1]) or (state.folders and state.folders[1]) or \"\",\n"
+        "\t\tdirsDone = walkJob.dirsDone or 0,\n"
+        "\t\tlastPath = lastPath, -- TEMPORARY: crash-diagnosis aid\n";
+    const size_t done_folder_at = source.find(old_done_folder);
+    if (done_folder_at == std::string::npos) {
+        log_event(L"warn", L"lua", L"A finished scan batch does not name the music folder, so the page cannot show which folder was read.");
+    } else {
+        source.replace(done_folder_at, old_done_folder.size(), new_done_folder);
     }
     return source;
 }

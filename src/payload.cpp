@@ -2,8 +2,11 @@
 
 #include "config.h"
 #include "installer.h"
+#include "update_gate.h"
+#include "text.h"
 #include "log.h"
 #include "paths.h"
+#include "steam_attach.h"
 #include "steam_discover.h"
 #include "wide_io.h"
 
@@ -12,7 +15,9 @@
 #endif
 #include <windows.h>
 
+#include <mutex>
 #include <string>
+#include <vector>
 
 namespace doomnet {
 namespace {
@@ -232,6 +237,7 @@ InstallResult apply_install(const std::wstring& root, const InstallRequest& requ
     config.player = request.player;
     config.skin = request.skin;
     config.player_color = request.match_skin && request.player && request.skin ? PlayerColor::Red : PlayerColor::Steam;
+    config.updates = true;
     if (!save_config_file(root + L"\\config.json", config, error)) {
         result.detail = error;
         log_event(L"error", L"payload", error.c_str());
@@ -260,6 +266,54 @@ InstallResult apply_install(const std::wstring& root, const InstallRequest& requ
         }
     }
 
+    InstalledVersions versions;
+    versions.doomnet = L"0.1.0";
+    if (request.player) {
+        std::string plugin;
+        std::wstring plugin_error;
+        if (read_entire_file(request.player_source + L"\\plugin.json", plugin, plugin_error)) {
+            const size_t at = plugin.find("\"version\"");
+            const size_t quote = at == std::string::npos ? std::string::npos : plugin.find('\"', plugin.find(':', at));
+            const size_t end = quote == std::string::npos ? std::string::npos : plugin.find('\"', quote + 1);
+            if (quote != std::string::npos && end != std::string::npos && end > quote + 1 && end - quote - 1 <= 64) {
+                versions.steamtunes = utf8_to_wide_lossy(plugin.substr(quote + 1, end - quote - 1));
+            }
+        }
+    }
+    if (request.skin) {
+        std::string skin;
+        std::wstring skin_error;
+        if (read_entire_file(request.skin_source + L"\\skin.json", skin, skin_error)) {
+            const size_t at = skin.find("\"version\"");
+            const size_t quote = at == std::string::npos ? std::string::npos : skin.find('\"', skin.find(':', at));
+            const size_t end = quote == std::string::npos ? std::string::npos : skin.find('\"', quote + 1);
+            if (quote != std::string::npos && end != std::string::npos && end > quote + 1 && end - quote - 1 <= 64) {
+                versions.steamskin = utf8_to_wide_lossy(skin.substr(quote + 1, end - quote - 1));
+            }
+        }
+    }
+    if (!save_installed_versions(root + L"\\versions.json", versions, error)) {
+        result.detail = error;
+        log_event(L"error", L"installer", error.c_str());
+        return result;
+    }
+    log_event(L"info", L"installer", (L"Wrote versions.json for DoomNet " + versions.doomnet + L", SteamTunes " + (versions.steamtunes.empty() ? L"(skipped)" : versions.steamtunes) + L", SteamSkin " + (versions.steamskin.empty() ? L"(skipped)" : versions.steamskin) + L".").c_str());
+
+    if (!directory_exists(root)) {
+        result.detail = L"'" + root + L"' is not there after the copy. Nothing was installed.";
+        log_event(L"error", L"payload", result.detail.c_str());
+        return result;
+    }
+    if (request.player && !wide_file_exists(root + L"\\player\\backend\\main.lua")) {
+        result.detail = L"The copy reported " + std::to_wstring(result.files_copied) + L" files, but '" + root + L"\\player\\backend\\main.lua' is not there. Nothing was installed.";
+        log_event(L"error", L"payload", result.detail.c_str());
+        return result;
+    }
+    if (request.skin && !wide_file_exists(root + L"\\skin\\skin.json")) {
+        result.detail = L"The copy reported " + std::to_wstring(result.files_copied) + L" files, but '" + root + L"\\skin\\skin.json' is not there. Nothing was installed.";
+        log_event(L"error", L"payload", result.detail.c_str());
+        return result;
+    }
     result.ok = true;
     result.detail = L"Installed " + std::to_wstring(result.files_copied) + L" files into '" + root + L"'.";
     log_event(L"info", L"payload", result.detail.c_str());
@@ -372,6 +426,333 @@ UninstallResult apply_uninstall(const UninstallRequest& request) {
     }
     result.ok = true;
     result.detail = L"Uninstall finished for '" + root + L"'. DoomNet, and any player or skin it had installed there, are gone.";
+    return result;
+}
+
+namespace {
+
+std::mutex g_store_mu;
+StoreInstallRequest g_store;
+bool g_store_pending = false;
+
+std::wstring module_directory() {
+    wchar_t exe[MAX_PATH] = {};
+    const DWORD wrote = GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    if (wrote == 0 || wrote >= MAX_PATH) {
+        return L"";
+    }
+    std::wstring path = exe;
+    const size_t slash = path.find_last_of(L"\\/");
+    return slash == std::wstring::npos ? L"" : path.substr(0, slash);
+}
+
+std::wstring default_tree(const wchar_t* payload_name, const wchar_t* marker, const wchar_t* repo) {
+    const std::wstring beside = module_directory() + L"\\payload\\" + payload_name;
+    if (wide_file_exists(beside + L"\\" + marker)) {
+        return beside;
+    }
+    if (wide_file_exists(std::wstring(repo) + L"\\" + marker)) {
+        return repo;
+    }
+    return L"";
+}
+
+std::wstring version_in_file(const std::wstring& path) {
+    std::string text;
+    std::wstring error;
+    if (!read_entire_file(path, text, error)) {
+        return L"";
+    }
+    const size_t at = text.find("\"version\"");
+    const size_t quote = at == std::string::npos ? std::string::npos : text.find('"', text.find(':', at));
+    const size_t end = quote == std::string::npos ? std::string::npos : text.find('"', quote + 1);
+    if (quote == std::string::npos || end == std::string::npos || end <= quote + 1 || end - quote - 1 > 64) {
+        return L"";
+    }
+    return utf8_to_wide_lossy(text.substr(quote + 1, end - quote - 1));
+}
+
+std::vector<std::wstring> split_command(const wchar_t* command_line) {
+    std::vector<std::wstring> tokens;
+    if (command_line == nullptr) {
+        return tokens;
+    }
+    const wchar_t* cursor = command_line;
+    while (*cursor != L'\0') {
+        while (*cursor == L' ' || *cursor == L'\t') {
+            ++cursor;
+        }
+        if (*cursor == L'\0') {
+            break;
+        }
+        std::wstring token;
+        if (*cursor == L'"') {
+            ++cursor;
+            while (*cursor != L'\0' && *cursor != L'"') {
+                token.push_back(*cursor++);
+            }
+            if (*cursor == L'"') {
+                ++cursor;
+            }
+        } else {
+            while (*cursor != L'\0' && *cursor != L' ' && *cursor != L'\t') {
+                token.push_back(*cursor++);
+            }
+        }
+        tokens.push_back(token);
+    }
+    return tokens;
+}
+
+}  // namespace
+
+void queue_store_install(const StoreInstallRequest& request) {
+    std::lock_guard<std::mutex> lock(g_store_mu);
+    g_store = request;
+    g_store_pending = true;
+    log_event(L"info", L"installer", (L"SteamSkin install was requested for '" + request.root + L"'. The copy runs off the Lua thread, and settings.json is not changed.").c_str());
+}
+
+bool take_store_install(StoreInstallRequest& out) {
+    std::lock_guard<std::mutex> lock(g_store_mu);
+    if (!g_store_pending) {
+        return false;
+    }
+    out = g_store;
+    g_store = StoreInstallRequest{};
+    g_store_pending = false;
+    return true;
+}
+
+InstallResult install_store_skin(const StoreInstallRequest& request) {
+    InstallResult result;
+    if (request.root.empty() || request.root.find(L"..") != std::wstring::npos || path_is_dev_source_tree(request.root)) {
+        result.detail = L"Refusing to install SteamSkin into '" + request.root + L"' because the folder is empty, contains '..', or is a source tree.";
+        log_event(L"error", L"installer", result.detail.c_str());
+        return result;
+    }
+    std::wstring steam = request.steam_path;
+    if (!steam.empty() && inside_directory(request.root, steam)) {
+        result.detail = L"Refusing to install SteamSkin into '" + request.root + L"' because that folder is inside the Steam install '" + steam + L"'.";
+        log_event(L"error", L"installer", result.detail.c_str());
+        return result;
+    }
+    Config existing;
+    std::wstring existing_error;
+    if (load_config_file(request.root + L"\\config.json", existing, existing_error) == ConfigLoad::Ok && existing.skin) {
+        result.detail = L"SteamSkin is already installed in '" + request.root + L"'. It was not copied again, and settings.json was not changed.";
+        log_event(L"info", L"installer", result.detail.c_str());
+        return result;
+    }
+    const std::wstring source = request.skin_source.empty() ? default_tree(L"skin", L"skin.json", L"D:\\Documents\\Repos\\SteamSkin") : request.skin_source;
+    if (source.empty() || source.find(L"..") != std::wstring::npos || !wide_file_exists(source + L"\\skin.json")) {
+        result.detail = L"SteamSkin was not installed because '" + source + L"' has no skin.json.";
+        log_event(L"error", L"installer", result.detail.c_str());
+        return result;
+    }
+    const std::wstring dest = request.root + L"\\skin";
+    if (lower_copy(full_path(source)) == lower_copy(full_path(dest))) {
+        result.detail = L"Refusing to copy SteamSkin from '" + source + L"' onto itself.";
+        log_event(L"error", L"installer", result.detail.c_str());
+        return result;
+    }
+    const std::wstring settings_path = request.root + L"\\player\\backend\\data\\settings.json";
+    std::string settings_before;
+    std::wstring settings_error;
+    const bool had_settings = read_entire_file(settings_path, settings_before, settings_error);
+    log_event(L"info", L"installer", (L"Copying SteamSkin from '" + source + L"' to '" + dest + L"'.").c_str());
+    std::wstring error;
+    if (!copy_tree(source, dest, 0, result.files_copied, error)) {
+        result.detail = error;
+        return result;
+    }
+    if (had_settings) {
+        std::string settings_after;
+        if (!read_entire_file(settings_path, settings_after, error) || settings_after != settings_before) {
+            result.detail = L"SteamSkin was copied, but '" + settings_path + L"' changed. The player's saved color must stay as it is.";
+            log_event(L"error", L"installer", result.detail.c_str());
+            return result;
+        }
+    }
+
+    Config config;
+    const ConfigLoad loaded = load_config_file(request.root + L"\\config.json", config, error);
+    if (loaded == ConfigLoad::Error) {
+        result.detail = error.empty() ? L"SteamSkin was copied, but config.json could not be read, so skin was not turned on." : error;
+        log_event(L"error", L"installer", result.detail.c_str());
+        return result;
+    }
+    if (loaded == ConfigLoad::Missing) {
+        config = Config{};
+        config.steam_path = steam;
+    } else if (config.steam_path.empty()) {
+        config.steam_path = steam;
+    }
+    config.skin = true;
+    if (!save_config_file(request.root + L"\\config.json", config, error)) {
+        result.detail = error;
+        log_event(L"error", L"installer", error.c_str());
+        return result;
+    }
+
+    InstalledVersions versions;
+    if (wide_file_exists(request.root + L"\\versions.json") && !load_installed_versions(request.root + L"\\versions.json", versions, error)) {
+        result.detail = error;
+        log_event(L"error", L"installer", error.c_str());
+        return result;
+    }
+    const std::wstring previous = versions.steamskin;
+    versions.steamskin = version_in_file(source + L"\\skin.json");
+    if (!save_installed_versions(request.root + L"\\versions.json", versions, error)) {
+        result.detail = error;
+        log_event(L"error", L"installer", error.c_str());
+        return result;
+    }
+    result.ok = true;
+    result.detail = L"Installed SteamSkin " + (versions.steamskin.empty() ? L"(no version)" : versions.steamskin) + L" (was " + (previous.empty() ? L"not installed" : previous) + L") into '" + dest + L"'. settings.json was not changed.";
+    log_event(L"info", L"installer", result.detail.c_str());
+    return result;
+}
+
+bool command_is_install(const wchar_t* command_line) {
+    const std::vector<std::wstring> tokens = split_command(command_line);
+    return !tokens.empty() && tokens[0] == L"--install";
+}
+
+bool command_is_hook(const wchar_t* command_line) {
+    const std::vector<std::wstring> tokens = split_command(command_line);
+    return !tokens.empty() && tokens[0] == L"--hook";
+}
+
+InstallResult run_hook_command(const wchar_t* command_line) {
+    InstallResult result;
+    const std::vector<std::wstring> tokens = split_command(command_line);
+    if (tokens.size() < 2 || tokens[0] != L"--hook") {
+        result.detail = L"The hook command needs the Steam folder. version.dll was not copied.";
+        log_event(L"error", L"installer", result.detail.c_str());
+        return result;
+    }
+    const std::wstring dll = module_directory() + L"\\version.dll";
+    log_event(L"info", L"installer", (L"Copying '" + dll + L"' beside steam.exe in '" + tokens[1] + L"'.").c_str());
+    const PlaceBootstrapResult placed = place_doomnet_bootstrap(tokens[1], dll, true);
+    result.ok = placed.ok;
+    result.detail = placed.detail.empty() ? L"version.dll was not copied beside steam.exe." : placed.detail;
+    if (!result.ok) {
+        log_event(L"error", L"installer", result.detail.c_str());
+    }
+    return result;
+}
+
+InstallResult run_command_line_install(const std::wstring& root, const wchar_t* command_line, const std::wstring& discovered_steam) {
+    InstallResult result;
+    const std::vector<std::wstring> tokens = split_command(command_line);
+    if (tokens.empty() || tokens[0] != L"--install") {
+        result.detail = L"The install command is missing --install, so nothing was copied.";
+        log_event(L"error", L"installer", result.detail.c_str());
+        return result;
+    }
+    InstallRequest request;
+    request.steam_path = discovered_steam;
+    for (size_t i = 1; i < tokens.size(); ++i) {
+        const std::wstring& token = tokens[i];
+        auto need_value = [&](const wchar_t* flag) -> const std::wstring* {
+            if (i + 1 >= tokens.size()) {
+                result.detail = std::wstring(L"Install flag ") + flag + L" needs a value. Nothing was copied.";
+                return nullptr;
+            }
+            return &tokens[++i];
+        };
+        if (token == L"--player") {
+            request.player = true;
+        } else if (token == L"--skin") {
+            request.skin = true;
+        } else if (token == L"--steam") {
+            const std::wstring* value = need_value(L"--steam");
+            if (value == nullptr) {
+                log_event(L"error", L"installer", result.detail.c_str());
+                return result;
+            }
+            request.steam_path = *value;
+        } else if (token == L"--color") {
+            const std::wstring* value = need_value(L"--color");
+            if (value == nullptr) {
+                log_event(L"error", L"installer", result.detail.c_str());
+                return result;
+            }
+            if (*value == L"red") {
+                request.match_skin = true;
+            } else if (*value != L"steam") {
+                result.detail = L"Install color '" + *value + L"' is not steam or red. Nothing was copied.";
+                log_event(L"error", L"installer", result.detail.c_str());
+                return result;
+            }
+        } else if (token == L"--player-source") {
+            const std::wstring* value = need_value(L"--player-source");
+            if (value == nullptr) {
+                log_event(L"error", L"installer", result.detail.c_str());
+                return result;
+            }
+            request.player_source = *value;
+        } else if (token == L"--skin-source") {
+            const std::wstring* value = need_value(L"--skin-source");
+            if (value == nullptr) {
+                log_event(L"error", L"installer", result.detail.c_str());
+                return result;
+            }
+            request.skin_source = *value;
+        } else {
+            result.detail = L"Install flag '" + token + L"' is not recognized. Nothing was copied.";
+            log_event(L"error", L"installer", result.detail.c_str());
+            return result;
+        }
+    }
+    if (request.player && request.player_source.empty()) {
+        request.player_source = default_tree(L"player", L"plugin.json", L"D:\\Documents\\Repos\\SteamTunes");
+    }
+    if (request.skin && request.skin_source.empty()) {
+        request.skin_source = default_tree(L"skin", L"skin.json", L"D:\\Documents\\Repos\\SteamSkin");
+    }
+    log_event(L"info", L"installer", (L"Running --install into '" + root + L"'. Steam is not started by this command.").c_str());
+    result = apply_install(root, request);
+    if (!result.ok) {
+        return result;
+    }
+    wchar_t self[MAX_PATH] = {};
+    if (GetModuleFileNameW(nullptr, self, MAX_PATH) > 0) {
+        std::wstring self_path = self;
+        const size_t slash = self_path.find_last_of(L"\\/");
+        const std::wstring name = slash == std::wstring::npos ? self_path : self_path.substr(slash + 1);
+        if (_wcsicmp(name.c_str(), L"DoomNet.exe") == 0) {
+            const std::wstring host_dest = root + L"\\DoomNet.exe";
+            if (_wcsicmp(full_path(self_path).c_str(), full_path(host_dest).c_str()) == 0) {
+                log_event(L"info", L"installer", (L"DoomNet.exe is already at '" + host_dest + L"', so Steam can start it.").c_str());
+            } else if (!CopyFileW(self_path.c_str(), host_dest.c_str(), FALSE)) {
+                result.ok = false;
+                result.detail = L"Could not copy DoomNet.exe to '" + host_dest + L"'. " + windows_error_text(GetLastError());
+                log_event(L"error", L"installer", result.detail.c_str());
+                return result;
+            } else {
+                log_event(L"info", L"installer", (L"Copied DoomNet.exe to '" + host_dest + L"' so Steam can start it.").c_str());
+            }
+        }
+    }
+    if (!request.steam_path.empty() && directory_has_steam_exe(request.steam_path)) {
+        const std::wstring dll = module_directory() + L"\\version.dll";
+        if (!wide_file_exists(dll)) {
+            result.ok = false;
+            result.detail = L"'" + dll + L"' is not beside DoomNet.exe, so Steam would open without the skin or the player.";
+            log_event(L"error", L"installer", result.detail.c_str());
+            return result;
+        }
+        const PlaceBootstrapResult placed = place_doomnet_bootstrap(request.steam_path, dll, true);
+        if (!placed.ok) {
+            result.ok = false;
+            result.detail = placed.detail.empty() ? L"DoomNet's bootstrap was not copied beside steam.exe." : placed.detail;
+            return result;
+        }
+    }
+    result.detail += L" Open Steam from its normal shortcut. DoomNet starts with it. Steam was not started by this install.";
+    log_event(L"info", L"installer", result.detail.c_str());
     return result;
 }
 

@@ -1,6 +1,6 @@
 // Spec: Process model, Installer.
 // config.json: steamPath (string), player (bool), skin (bool),
-// playerColor ("steam" or "red"), and optional streamTunesRelay.
+// playerColor ("steam" or "red"), optional streamTunesRelay, and optional updates.
 // Unknown keys and malformed values fail
 // the load. The file is capped at 64 KiB so a bad write cannot pin memory.
 
@@ -295,6 +295,7 @@ ConfigLoad load_config_file(const std::wstring& path, Config& out, std::wstring&
     bool seen_skin = false;
     bool seen_color = false;
     bool seen_streamtunes_relay = false;
+    bool seen_updates = false;
     skip_ws(parser);
     if (parser.cur < parser.end && *parser.cur == L'}') {
         ++parser.cur;
@@ -340,8 +341,14 @@ ConfigLoad load_config_file(const std::wstring& path, Config& out, std::wstring&
                     break;
                 }
                 seen_streamtunes_relay = true;
+            } else if (key == L"updates") {
+                if (seen_updates || !parse_bool(parser, parsed.updates)) {
+                    fail(parser, L"config.json lists updates more than once or the value is not true or false. The file was not applied.");
+                    break;
+                }
+                seen_updates = true;
             } else {
-                fail(parser, L"config.json key '" + key + L"' is not recognized. The only keys are steamPath, player, skin, playerColor, and streamTunesRelay. The file was not applied.");
+                fail(parser, L"config.json key '" + key + L"' is not recognized. The only keys are steamPath, player, skin, playerColor, streamTunesRelay, and updates. The file was not applied.");
                 break;
             }
             skip_ws(parser);
@@ -380,6 +387,8 @@ bool save_config_file(const std::wstring& path, const Config& config, std::wstri
     json += config.player_color == PlayerColor::Red ? "\"red\"" : "\"steam\"";
     json += ",\n  \"streamTunesRelay\": ";
     append_json_string(json, config.streamtunes_relay);
+    json += ",\n  \"updates\": ";
+    json += config.updates ? "true" : "false";
     json += "\n}\n";
     if (json.size() > kMaxConfigBytes) {
         error = L"Refusing to save '" + path + L"' because the JSON would be " + std::to_wstring(json.size()) + L" bytes, over the 65536 byte limit.";

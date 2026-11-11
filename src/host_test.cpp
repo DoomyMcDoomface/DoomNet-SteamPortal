@@ -19,6 +19,8 @@
 #include "pipe_session.h"
 #include "resident.h"
 #include "state_thread.h"
+#include "stream.h"
+#include "json_wire.h"
 #include "text.h"
 
 #include <windows.h>
@@ -98,6 +100,13 @@ WireValue str(const std::string& text) {
     WireValue v;
     v.kind = WireValue::Kind::String;
     v.text = text;
+    return v;
+}
+
+WireValue flag(bool value) {
+    WireValue v;
+    v.kind = WireValue::Kind::Boolean;
+    v.boolean = value;
     return v;
 }
 
@@ -821,6 +830,118 @@ void test_real_player() {
 
     r = rig.call_wait("get_player_state");
     check(r.ok, "get_player_state resolves (got " + r.json.substr(0, 120) + ")");
+
+    // Dummy music folder: sound files in the root and in folders inside it.
+    // A text file and a picture sit beside them and must not be indexed.
+    const fsn::path music = fsn::path(g_root) / L"dummy-music";
+    const char* sound_files[] = {
+        "root-song.mp3",
+        "root-song.wav",
+        "Artist\\loose.ogg",
+        "Artist\\Album\\nested-song.flac",
+        "Artist\\Album\\voice.oga",
+        "Artist\\Album\\track.m4a",
+        "Artist\\Album\\Disc\\deeper.aac",
+    };
+    for (const char* relative : sound_files) {
+        std::string wide_utf8(relative);
+        std::wstring wide(wide_utf8.begin(), wide_utf8.end());
+        for (wchar_t& ch : wide) {
+            if (ch == L'\\') {
+                ch = L'/';
+            }
+        }
+        write_text(music / wide, "sound");
+    }
+    write_text(music / L"Artist" / L"notes.txt", "not music");
+    write_text(music / L"Artist" / L"Album" / L"cover.jpg", "picture");
+    r = rig.call_wait("add_music_folder", {str(wide_to_utf8(music.wstring()))});
+    check(r.ok && contains(r.json, "true"), "add_music_folder did not accept the dummy library (got " + r.json.substr(0, 200) + ")");
+    r = rig.call_wait("rescan_library_start", {flag(true), flag(false)}, 20000);
+    check(r.ok, "rescan_library_start failed (got " + r.json.substr(0, 200) + ")");
+    std::printf("info  scan start => %s\n", r.json.substr(0, 300).c_str());
+    for (int attempt = 0; attempt < 40; ++attempt) {
+        r = rig.call_wait("scan_library_batch", {num(50)}, 20000);
+        if (!r.ok) {
+            break;
+        }
+        if (contains(r.json, "\\\"done\\\":true") && !contains(r.json, "\\\"listing\\\":true")) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+    std::printf("info  scan done => %s\n", r.json.substr(0, 400).c_str());
+    const std::string index = read_text(player_root / L"backend" / L"data" / L"library_index.json");
+    int found_sounds = 0;
+    for (const char* relative : sound_files) {
+        const std::string name(relative);
+        const size_t slash = name.find_last_of('\\');
+        const std::string file = slash == std::string::npos ? name : name.substr(slash + 1);
+        const bool found = index.find(file) != std::string::npos;
+        if (found) {
+            ++found_sounds;
+        }
+        std::printf("info  dummy scan %s %s\n", found ? "found" : "MISSING", file.c_str());
+        check(found, (std::string("the scan did not index ") + file).c_str());
+    }
+    check(found_sounds == 7, "the scan did not index every sound file in the dummy folder");
+    check(index.find("notes.txt") == std::string::npos, "notes.txt was indexed as a song");
+    r = rig.call_wait("get_library_info");
+    std::printf("info  library after dummy scan => %s\n", r.json.substr(0, 300).c_str());
+    check(r.ok && contains(r.json, "\\\"count\\\":7"), "the library count is not the seven sound files (got " + r.json.substr(0, 200) + ")");
+
+    doomnet::set_stream_hook(true);
+    std::string track_id;
+    {
+        doomnet::Json parsed;
+        std::string parse_error;
+        if (doomnet::json_parse(index, parsed, parse_error) && parsed.type == doomnet::Json::Type::Array) {
+            for (const doomnet::Json& track : parsed.a) {
+                if (track.key_string("path").find("root-song.mp3") != std::string::npos) {
+                    track_id = track.key_string("id");
+                }
+            }
+        }
+    }
+    check(!track_id.empty(), "root-song.mp3 has no track id");
+    r = rig.call_wait("stage_track_for_playback", {str(track_id)});
+    std::string played_url;
+    {
+        doomnet::Json outer;
+        std::string parse_error;
+        if (doomnet::json_parse(r.json, outer, parse_error) && outer.type == doomnet::Json::Type::String) {
+            doomnet::Json inner;
+            if (doomnet::json_parse(outer.s, inner, parse_error)) {
+                played_url = inner.key_string("url");
+            }
+        }
+    }
+    std::printf("info  direct play => %s\n", r.json.substr(0, 300).c_str());
+    std::string comparable = played_url;
+    for (size_t i = 0; i + 2 < comparable.size(); ++i) {
+        if (comparable[i] == '%' && comparable[i + 1] == '2' && (comparable[i + 2] == 'B' || comparable[i + 2] == 'b')) {
+            comparable.replace(i, 3, "+");
+        }
+    }
+    check(r.ok && !played_url.empty() && comparable.find(track_id) != std::string::npos && played_url.find(".mp3") == std::string::npos, "a play did not use the original file id (got " + r.json.substr(0, 300) + ")");
+    bool copied = false;
+    std::error_code walk_error;
+    const fsn::path stage_dir = fsn::path(g_root) / L"fake-steam" / L"steamui" / L"steam-music-player" / L"stream";
+    if (fsn::exists(stage_dir, walk_error)) {
+        for (const fsn::directory_entry& entry : fsn::recursive_directory_iterator(stage_dir, fsn::directory_options::skip_permission_denied, walk_error)) {
+            if (entry.is_regular_file(walk_error)) {
+                copied = true;
+            }
+        }
+    }
+    check(!copied, "a play copied the song into steamui");
+    const doomnet::StreamReply served = doomnet::serve_stream_url(played_url);
+    check(served.status == 200 && served.body == "sound", "the stream address did not return the dummy song");
+    const doomnet::StreamReply climb = doomnet::serve_stream_url("https://steamloopback.host/steam-music-player/stream/%2e%2e/%2e%2e/%2e%2e/%2e%2e/steamui/steam-music-player/steam-music-player.css");
+    check(climb.status == 404, "the escape-probe address was not refused");
+    r = rig.call_wait("release_staged_track", {str(track_id)});
+    check(r.ok && contains(r.json, "\\\"ok\\\":true"), "stopping the song did not succeed (got " + r.json.substr(0, 200) + ")");
+    doomnet::set_stream_hook(false);
 
     // Stop the player's process supervisor (wscript.exe) so the test leaves nothing running.
     rig.browser.stop();

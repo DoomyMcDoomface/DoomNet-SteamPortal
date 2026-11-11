@@ -2,12 +2,15 @@
 #include "cdp_pipe.h"
 #include "host_bus.h"
 #include "host_internal.h"
+#include "catalog.h"
 #include "config.h"
 #include "installer.h"
+#include "update_gate.h"
 #include "instance.h"
 #include "launch.h"
 #include "log.h"
 #include "paths.h"
+#include "resident.h"
 #include "page_bridge.h"
 #include "payload.h"
 #include "pipe_session.h"
@@ -16,7 +19,10 @@
 #include "steam_attach.h"
 #include "steam_discover.h"
 #include "state_thread.h"
+#include "stream.h"
 #include "streamtunes_identity.h"
+#include "json_wire.h"
+#include "text.h"
 #include "toggle.h"
 #include "wide_io.h"
 
@@ -82,12 +88,13 @@ void test_config() {
     config.skin = true;
     config.player_color = doomnet::PlayerColor::Red;
     config.streamtunes_relay = L"wss://relay.example/streamtunes";
+    config.updates = true;
     std::wstring error;
     check(doomnet::save_config_file(path, config, error), "save config");
     doomnet::Config loaded;
     check(doomnet::load_config_file(path, loaded, error) == doomnet::ConfigLoad::Ok, "load config");
     check(loaded.steam_path == config.steam_path && loaded.player && loaded.skin && loaded.player_color == doomnet::PlayerColor::Red &&
-              loaded.streamtunes_relay == config.streamtunes_relay,
+              loaded.streamtunes_relay == config.streamtunes_relay && loaded.updates,
           "round trip");
 
     doomnet::Config missing;
@@ -156,6 +163,279 @@ void test_streamtunes_identity() {
               script.find("wss://relay.example/streamtunes") != std::string::npos,
           "StreamTunes exposed the account login or omitted its guarded page config");
     check(doomnet::streamtunes_config_script(steam, L"", error).empty() && error.empty(), "an empty relay URL still enabled StreamTunes");
+}
+
+void test_update_gate() {
+    check(doomnet::path_is_dev_source_tree(L"D:\\Documents\\Repos\\DoomNet-SteamPortal\\build\\Release\\DoomNet.exe"), "DoomNet source tree was treated as a tester install");
+    check(doomnet::path_is_dev_source_tree(L"D:\\Documents\\Repos\\SteamTunes"), "SteamTunes source tree was treated as a tester install");
+    check(doomnet::path_is_dev_source_tree(L"D:\\Documents\\Repos\\SteamSkin\\skin.json"), "SteamSkin source tree was treated as a tester install");
+    check(!doomnet::path_is_dev_source_tree(L"C:\\Users\\Tester\\AppData\\Local\\DoomNet\\DoomNet.exe"), "a tester install path was treated as a source tree");
+    check(!doomnet::updates_should_run(L"C:\\Users\\Tester\\AppData\\Local\\DoomNet\\DoomNet.exe", L"C:\\Users\\Tester\\AppData\\Local\\DoomNet", false), "updates ran while config kept them off");
+    check(!doomnet::updates_should_run(L"D:\\Documents\\Repos\\DoomNet-SteamPortal\\build\\Release\\DoomNet.exe", L"C:\\Users\\Tester\\AppData\\Local\\DoomNet", true), "updates ran from the DoomNet source tree");
+    check(doomnet::updates_should_run(L"C:\\Users\\Tester\\AppData\\Local\\DoomNet\\DoomNet.exe", L"C:\\Users\\Tester\\AppData\\Local\\DoomNet", true), "a tester install with updates on was blocked");
+
+    const std::wstring dir = temp_dir();
+    const std::wstring path = dir + L"\\versions.json";
+    doomnet::InstalledVersions versions;
+    versions.doomnet = L"0.1.0";
+    versions.steamtunes = L"1.15.0";
+    versions.steamskin = L"0.9.27";
+    std::wstring error;
+    check(doomnet::save_installed_versions(path, versions, error), "save versions.json");
+    doomnet::InstalledVersions loaded;
+    check(doomnet::load_installed_versions(path, loaded, error), "load versions.json");
+    check(loaded.doomnet == versions.doomnet && loaded.steamtunes == versions.steamtunes && loaded.steamskin == versions.steamskin, "versions.json round trip");
+
+    const char* manifest_text =
+        "{\"doomnet\":{\"version\":\"0.1.0\",\"url\":\"https://example.com/doomnet\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},"
+        "\"steamtunes\":{\"version\":\"1.15.0\",\"url\":\"https://example.com/player\",\"sha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"},"
+        "\"steamskin\":{\"version\":\"9.9.9\",\"url\":\"https://example.com/skin\",\"sha256\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"}}";
+    doomnet::ReleaseManifest manifest;
+    check(doomnet::parse_release_manifest(manifest_text, manifest, error), "production manifest parse");
+    doomnet::InstalledVersions installed = versions;
+    installed.steamskin.clear();
+    const doomnet::UpdatePlan skipped = doomnet::updates_needed(manifest, installed);
+    check(!skipped.doomnet && !skipped.steamtunes && !skipped.steamskin, "a skipped SteamSkin was treated as an update");
+    installed.steamskin = L"0.9.27";
+    installed.steamtunes = L"1.0.0";
+    const doomnet::UpdatePlan needed = doomnet::updates_needed(manifest, installed);
+    check(!needed.doomnet && needed.steamtunes && needed.steamskin, "installed pieces with a new version were not offered");
+    check(!doomnet::parse_release_manifest("{\"doomnet\":{\"version\":\"1\",\"url\":\"http://example.com/x\",\"sha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}}", manifest, error), "an http manifest was accepted");
+
+    const std::string hello = "hello";
+    const std::string hello_hash = doomnet::sha256_hex(hello.data(), hello.size());
+    check(hello_hash.size() == 64, "sha256 length");
+    const std::wstring payload_file = dir + L"\\payload.bin";
+    const std::wstring installed_file = dir + L"\\installed.bin";
+    const char keep[] = "keep";
+    check(doomnet::write_new_file(payload_file, hello.data(), hello.size(), error), "payload write");
+    check(doomnet::write_new_file(installed_file, keep, sizeof(keep) - 1, error), "installed write");
+    check(!doomnet::payload_hash_matches(payload_file, std::string(64, '0'), error), "a mismatched hash was accepted");
+    check(!doomnet::replace_file_if_hash_matches(payload_file, installed_file, std::string(64, '0'), error), "a mismatched hash replaced a file");
+    std::string still;
+    check(doomnet::read_entire_file(installed_file, still, error) && still == "keep", "a mismatched hash changed the installed file");
+    check(doomnet::replace_file_if_hash_matches(payload_file, installed_file, hello_hash, error), "a matching hash did not replace the file");
+    check(doomnet::read_entire_file(installed_file, still, error) && still == "hello", "the verified payload was not the file that landed");
+    const std::wstring rejected_download = dir + L"\\not-downloaded.bin";
+    check(!doomnet::download_https(L"http://example.com/payload.bin", rejected_download, 1024, error), "an http download was accepted");
+    check(!doomnet::wide_file_exists(rejected_download), "an http download left a file");
+
+    doomnet::note_production_update_gate(L"D:\\Documents\\Repos\\DoomNet-SteamPortal\\build\\Release\\DoomNet.exe", dir, true);
+
+    auto append_u16 = [](std::string& out, unsigned value) {
+        out.push_back(static_cast<char>(value & 0xFF));
+        out.push_back(static_cast<char>((value >> 8) & 0xFF));
+    };
+    auto append_u32 = [](std::string& out, unsigned value) {
+        out.push_back(static_cast<char>(value & 0xFF));
+        out.push_back(static_cast<char>((value >> 8) & 0xFF));
+        out.push_back(static_cast<char>((value >> 16) & 0xFF));
+        out.push_back(static_cast<char>((value >> 24) & 0xFF));
+    };
+    auto store_zip = [&](const std::vector<std::pair<std::string, std::string>>& files) {
+        std::string locals;
+        std::string central;
+        unsigned count = 0;
+        for (const auto& file : files) {
+            const unsigned offset = static_cast<unsigned>(locals.size());
+            append_u32(locals, 0x04034b50u);
+            append_u16(locals, 20);
+            append_u16(locals, 0);
+            append_u16(locals, 0);
+            append_u16(locals, 0);
+            append_u16(locals, 0);
+            append_u32(locals, 0);
+            append_u32(locals, static_cast<unsigned>(file.second.size()));
+            append_u32(locals, static_cast<unsigned>(file.second.size()));
+            append_u16(locals, static_cast<unsigned>(file.first.size()));
+            append_u16(locals, 0);
+            locals += file.first;
+            locals += file.second;
+            append_u32(central, 0x02014b50u);
+            append_u16(central, 20);
+            append_u16(central, 20);
+            append_u16(central, 0);
+            append_u16(central, 0);
+            append_u16(central, 0);
+            append_u16(central, 0);
+            append_u32(central, 0);
+            append_u32(central, static_cast<unsigned>(file.second.size()));
+            append_u32(central, static_cast<unsigned>(file.second.size()));
+            append_u16(central, static_cast<unsigned>(file.first.size()));
+            append_u16(central, 0);
+            append_u16(central, 0);
+            append_u16(central, 0);
+            append_u16(central, 0);
+            append_u32(central, 0);
+            append_u32(central, offset);
+            central += file.first;
+            ++count;
+        }
+        std::string zip = locals;
+        const unsigned cd_off = static_cast<unsigned>(zip.size());
+        zip += central;
+        append_u32(zip, 0x06054b50u);
+        append_u16(zip, 0);
+        append_u16(zip, 0);
+        append_u16(zip, count);
+        append_u16(zip, count);
+        append_u32(zip, static_cast<unsigned>(central.size()));
+        append_u32(zip, cd_off);
+        append_u16(zip, 0);
+        return zip;
+    };
+
+    const std::wstring update_root = dir + L"\\updater";
+    CreateDirectoryW(update_root.c_str(), nullptr);
+    CreateDirectoryW((update_root + L"\\updates").c_str(), nullptr);
+    CreateDirectoryW((update_root + L"\\player").c_str(), nullptr);
+    CreateDirectoryW((update_root + L"\\player\\backend").c_str(), nullptr);
+    CreateDirectoryW((update_root + L"\\player\\backend\\data").c_str(), nullptr);
+    const char saved_settings[] = "{\"uiColorTheme\":\"red\"}\n";
+    check(doomnet::write_new_file(update_root + L"\\player\\backend\\data\\settings.json", saved_settings, sizeof(saved_settings) - 1, error), "updater settings");
+    const char old_main[] = "old";
+    check(doomnet::write_new_file(update_root + L"\\player\\backend\\main.lua", old_main, sizeof(old_main) - 1, error), "updater old main");
+    doomnet::InstalledVersions update_versions;
+    update_versions.doomnet = L"0.1.0";
+    update_versions.steamtunes = L"1.15.0";
+    update_versions.steamskin = L"0.9.27";
+    check(doomnet::save_installed_versions(update_root + L"\\versions.json", update_versions, error), "updater versions");
+    const std::string player_zip = store_zip({{"plugin.json", "{}\n"}, {"backend/main.lua", "new-player"}, {"backend/data/settings.json", "overwrite"}});
+    const std::string player_hash = doomnet::sha256_hex(player_zip.data(), player_zip.size());
+    check(doomnet::write_new_file(update_root + L"\\updates\\steamtunes.bin", player_zip.data(), player_zip.size(), error), "updater player zip");
+    const std::string player_pending = "steamtunes playerhash1 " + player_hash + "\n";
+    check(player_pending.size() > 64, "player pending line");
+    check(doomnet::write_new_file(update_root + L"\\updates\\pending.txt", player_pending.data(), player_pending.size(), error), "updater pending");
+    check(doomnet::apply_pending_updates(update_root, L""), "the player update was not applied");
+    std::string updated_main;
+    std::string kept_settings;
+    check(doomnet::read_entire_file(update_root + L"\\player\\backend\\main.lua", updated_main, error) && updated_main == "new-player", "the player update did not replace main.lua");
+    check(doomnet::read_entire_file(update_root + L"\\player\\backend\\data\\settings.json", kept_settings, error) && kept_settings == saved_settings, "the player update replaced settings.json");
+    check(!doomnet::wide_file_exists(update_root + L"\\player\\backend\\data\\settings.json") || kept_settings == saved_settings, "settings check");
+    doomnet::InstalledVersions after_update;
+    check(doomnet::load_installed_versions(update_root + L"\\versions.json", after_update, error) && after_update.steamtunes == L"playerhash1" && after_update.doomnet == L"0.1.0", "the applied player version was not recorded");
+
+    const std::string hostile = store_zip({{"../escaped.txt", "no"}});
+    const std::string hostile_hash = doomnet::sha256_hex(hostile.data(), hostile.size());
+    check(doomnet::write_new_file(update_root + L"\\updates\\steamskin.bin", hostile.data(), hostile.size(), error), "hostile zip");
+    const std::string hostile_pending = "steamskin hostilehash " + hostile_hash + "\n";
+    check(doomnet::write_new_file(update_root + L"\\updates\\pending.txt", hostile_pending.data(), hostile_pending.size(), error), "hostile pending");
+    check(!doomnet::apply_pending_updates(update_root, L""), "a zip that climbs out of the folder was applied");
+    check(!doomnet::wide_file_exists(dir + L"\\escaped.txt"), "a zip wrote a file outside the update folder");
+    check(!doomnet::wide_file_exists(update_root + L"\\updates\\steamskin.bin"), "a rejected update was kept");
+
+    const char old_exe[] = "OLD";
+    check(doomnet::write_new_file(update_root + L"\\DoomNet.exe", old_exe, sizeof(old_exe) - 1, error), "old program");
+    const std::string program_zip = store_zip({{"DoomNet.exe", "NEWEXE"}, {"version.dll", "DLL"}});
+    const std::string program_hash = doomnet::sha256_hex(program_zip.data(), program_zip.size());
+    check(doomnet::write_new_file(update_root + L"\\updates\\doomnet.bin", program_zip.data(), program_zip.size(), error), "program zip");
+    const std::string program_pending = "doomnet programhash " + program_hash + "\n";
+    check(doomnet::write_new_file(update_root + L"\\updates\\pending.txt", program_pending.data(), program_pending.size(), error), "program pending");
+    check(doomnet::apply_pending_updates(update_root, L""), "the program update was not applied");
+    std::string new_exe;
+    std::string previous_exe;
+    std::string new_dll;
+    check(doomnet::read_entire_file(update_root + L"\\DoomNet.exe", new_exe, error) && new_exe == "NEWEXE", "DoomNet.exe was not replaced");
+    check(doomnet::read_entire_file(update_root + L"\\DoomNet.exe.previous", previous_exe, error) && previous_exe == "OLD", "the previous program was not kept");
+    check(doomnet::read_entire_file(update_root + L"\\version.dll", new_dll, error) && new_dll == "DLL", "version.dll was not saved beside the program");
+
+    const char keep_exe[] = "KEEP";
+    check(doomnet::write_new_file(update_root + L"\\DoomNet.exe", keep_exe, sizeof(keep_exe) - 1, error), "keep program");
+    check(doomnet::write_new_file(update_root + L"\\updates\\doomnet.bin", old_exe, sizeof(old_exe) - 1, error), "bad program payload");
+    const std::string bad_pending = std::string("doomnet badhash ") + std::string(64, '0') + "\n";
+    check(doomnet::write_new_file(update_root + L"\\updates\\pending.txt", bad_pending.data(), bad_pending.size(), error), "bad pending");
+    check(!doomnet::apply_pending_updates(update_root, L""), "a mismatched update hash was applied");
+    std::string kept_exe;
+    check(doomnet::read_entire_file(update_root + L"\\DoomNet.exe", kept_exe, error) && kept_exe == "KEEP", "a mismatched hash replaced DoomNet.exe");
+
+    const std::wstring skin_src = dir + L"\\srcskin";
+    CreateDirectoryW(skin_src.c_str(), nullptr);
+    const char skin_json[] = "{\"version\":\"9.9.9\"}\n";
+    const char theme[] = "body{}\n";
+    check(doomnet::write_new_file(skin_src + L"\\skin.json", skin_json, sizeof(skin_json) - 1, error), "fixture skin.json");
+    check(doomnet::write_new_file(skin_src + L"\\theme.css", theme, sizeof(theme) - 1, error), "fixture theme");
+    const std::wstring install_root = dir + L"\\install";
+    CreateDirectoryW(install_root.c_str(), nullptr);
+    const std::wstring settings = install_root + L"\\player\\backend\\data\\settings.json";
+    CreateDirectoryW((install_root + L"\\player").c_str(), nullptr);
+    CreateDirectoryW((install_root + L"\\player\\backend").c_str(), nullptr);
+    CreateDirectoryW((install_root + L"\\player\\backend\\data").c_str(), nullptr);
+    const char saved[] = "{\"uiColorTheme\":\"red\",\"keep\":\"yes\"}\n";
+    check(doomnet::write_new_file(settings, saved, sizeof(saved) - 1, error), "existing settings");
+    doomnet::Config before;
+    before.player = true;
+    before.skin = false;
+    before.player_color = doomnet::PlayerColor::Red;
+    before.updates = false;
+    before.steam_path = dir + L"\\notsteam";
+    check(doomnet::save_config_file(install_root + L"\\config.json", before, error), "existing config");
+    doomnet::InstalledVersions prior;
+    prior.doomnet = L"0.1.0";
+    prior.steamtunes = L"1.15.0";
+    check(doomnet::save_installed_versions(install_root + L"\\versions.json", prior, error), "existing versions");
+    doomnet::StoreInstallRequest store;
+    store.root = install_root;
+    store.skin_source = skin_src;
+    store.steam_path = before.steam_path;
+    const doomnet::InstallResult stored = doomnet::install_store_skin(store);
+    check(stored.ok, "store skin install");
+    std::string settings_after;
+    check(doomnet::read_entire_file(settings, settings_after, error) && settings_after == saved, "store install rewrote settings.json");
+    doomnet::Config after;
+    check(doomnet::load_config_file(install_root + L"\\config.json", after, error) == doomnet::ConfigLoad::Ok, "store config load");
+    check(after.skin && after.player && !after.updates && after.player_color == doomnet::PlayerColor::Red, "store install changed player, color, or updates");
+    doomnet::InstalledVersions after_versions;
+    check(doomnet::load_installed_versions(install_root + L"\\versions.json", after_versions, error), "store versions");
+    check(after_versions.steamskin == L"9.9.9" && after_versions.steamtunes == L"1.15.0", "store version record");
+    const doomnet::InstallResult again = doomnet::install_store_skin(store);
+    check(!again.ok && again.files_copied == 0, "a second SteamSkin install was accepted");
+    check(doomnet::read_entire_file(settings, settings_after, error) && settings_after == saved, "a second SteamSkin install rewrote settings.json");
+    const std::wstring steam_root = dir + L"\\steamdir";
+    CreateDirectoryW(steam_root.c_str(), nullptr);
+    check(doomnet::write_new_file(steam_root + L"\\steam.exe", "x", 1, error), "fake steam.exe");
+    doomnet::StoreInstallRequest inside;
+    inside.root = steam_root + L"\\data";
+    inside.skin_source = skin_src;
+    inside.steam_path = steam_root;
+    check(!doomnet::install_store_skin(inside).ok, "store install inside Steam was accepted");
+
+    doomnet::StartupMode mode = doomnet::StartupMode::Run;
+    std::wstring rejected;
+    check(doomnet::parse_startup_mode(L"", mode, rejected) && mode == doomnet::StartupMode::Once, "an empty command line stayed resident");
+    check(!doomnet::command_is_install(L""), "an empty command line was treated as --install");
+    check(doomnet::command_is_install(L"--install --skin --steam \"C:\\Steam\""), "--install was not recognized");
+    check(doomnet::command_is_hook(L"--hook \"C:\\Steam\""), "--hook was not recognized");
+    check(!doomnet::command_is_hook(L"--install"), "--install was treated as the hook copy");
+    const std::wstring command = L"--install --skin --color red --steam \"" + (dir + L"\\notsteam") + L"\" --skin-source \"" + skin_src + L"\"";
+    const std::wstring command_root = dir + L"\\command-install";
+    const doomnet::InstallResult commanded = doomnet::run_command_line_install(command_root, command.c_str(), L"");
+    check(commanded.ok, "--install did not copy the skin");
+    check(doomnet::wide_file_exists(command_root + L"\\skin\\skin.json"), "--install did not write skin.json");
+    std::string command_settings;
+    check(!doomnet::read_entire_file(command_root + L"\\player\\backend\\data\\settings.json", command_settings, error), "--install wrote settings.json for a skin-only copy");
+
+    wchar_t self[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, self, MAX_PATH);
+    std::wstring folder = self;
+    folder.resize(folder.find_last_of(L"\\/"));
+    const std::wstring child = folder + L"\\DoomNetDummyChild.exe";
+    const std::wstring steam_exe = dir + L"\\steam.exe";
+    const std::wstring marker = dir + L"\\steam-marker.txt";
+    check(CopyFileW(child.c_str(), steam_exe.c_str(), FALSE) != FALSE, "could not copy the steam.exe test stub");
+    SetEnvironmentVariableW(L"DOOMNET_CHILD_MARKER", marker.c_str());
+    check(doomnet::start_steam_visible(steam_exe, error), "visible steam start");
+    bool marked = false;
+    for (int i = 0; i < 50 && !marked; ++i) {
+        marked = doomnet::wide_file_exists(marker);
+        if (!marked) {
+            Sleep(20);
+        }
+    }
+    check(marked, "the visible steam.exe stub did not write its marker");
+    DWORD exit_code = 0;
+    check(!doomnet::launch_hidden(steam_exe, 1000, exit_code, error), "launch_hidden started steam.exe");
+    check(error.find(L"steam.exe") != std::wstring::npos, "launch_hidden did not name steam.exe");
+    check(!doomnet::start_steam_visible(dir + L"\\not-steam.exe", error), "a file that is not steam.exe was started");
 }
 
 void test_color() {
@@ -296,9 +576,9 @@ void test_install_window_and_payload() {
     check(IsWindow(window) == FALSE, "setup window stayed open");
 
     const std::wstring source = temp_dir();
-    const char plugin[] = "{\"name\":\"SteamMusicPlayer\"}\n";
+    const char plugin[] = "{\"name\":\"SteamMusicPlayer\",\"version\":\"1.15.0\"}\n";
     const char backend[] = "backend-marker\n";
-    const char skin[] = "{\"UseDefaultPatches\":true}\n";
+    const char skin[] = "{\"UseDefaultPatches\":true,\"version\":\"0.9.27\"}\n";
     std::wstring error;
     CreateDirectoryW((source + L"\\backend").c_str(), nullptr);
     CreateDirectoryW((source + L"\\skin").c_str(), nullptr);
@@ -321,6 +601,11 @@ void test_install_window_and_payload() {
     std::string copied;
     check(doomnet::read_entire_file(root + L"\\player\\plugin.json", copied, error) && copied.find("SteamMusicPlayer") != std::string::npos, "copied plugin.json");
     check(doomnet::wide_file_exists(root + L"\\skin\\skin.json"), "copied skin.json");
+    doomnet::Config installed_config;
+    check(doomnet::load_config_file(root + L"\\config.json", installed_config, error) == doomnet::ConfigLoad::Ok && installed_config.updates, "tester install did not turn updates on");
+    doomnet::InstalledVersions installed_versions;
+    check(doomnet::load_installed_versions(root + L"\\versions.json", installed_versions, error), "versions.json missing after install");
+    check(installed_versions.doomnet == L"0.1.0" && installed_versions.steamtunes == L"1.15.0" && installed_versions.steamskin == L"0.9.27", "versions.json did not capture the installed app versions");
 
     const std::string original = settings;
     request.match_skin = false;
@@ -567,6 +852,29 @@ void test_place_bootstrap_and_pipe() {
     std::string built_bytes;
     check(doomnet::read_entire_file(built, built_bytes, error) && built_bytes.find("DoomNetWsock32") != std::string::npos, "the built wsock32.dll does not contain DoomNetWsock32");
     check(!doomnet::is_millennium_bootstrap(built), "the built wsock32.dll was mistaken for Millennium");
+    const std::wstring built_version = self_dir + L"\\version.dll";
+    check(doomnet::wide_file_exists(built_version), "the built version.dll is not beside the test");
+    std::string version_bytes;
+    check(doomnet::read_entire_file(built_version, version_bytes, error) && version_bytes.find("DoomNetWsock32") != std::string::npos && version_bytes.find("VerQueryValueW") != std::string::npos, "the built version.dll is not the startup hook");
+    const std::wstring version_steam = temp_dir();
+    CreateDirectoryW(version_steam.c_str(), nullptr);
+    check(doomnet::write_new_file(version_steam + L"\\steam.exe", "x", 1, error), "version steam.exe");
+    check(CopyFileW(built_version.c_str(), (version_steam + L"\\version.dll").c_str(), FALSE) != FALSE, "could not stage version.dll");
+    check(doomnet::millennium_state(version_steam) == doomnet::MillenniumState::NotPresent, "DoomNet's version.dll was treated as Millennium");
+    const std::wstring late_hook = version_steam + L"\\wsock32.dll";
+    check(CopyFileW(built.c_str(), late_hook.c_str(), FALSE) != FALSE, "could not stage the late wsock32.dll");
+    const doomnet::PlaceBootstrapResult version_placed = doomnet::place_doomnet_bootstrap(version_steam, built_version, false);
+    check(version_placed.ok, "version.dll was not placed beside steam.exe");
+    check(!doomnet::wide_file_exists(late_hook), "the late wsock32.dll was left beside steam.exe");
+    check(doomnet::doomnet_hook_installed(version_steam), "version.dll was not accepted as the hook for a Steam the user already opened");
+    const std::wstring bare_steam = temp_dir();
+    make_fake_steam(bare_steam, false);
+    check(!doomnet::doomnet_hook_installed(bare_steam), "a Steam folder with no DoomNet hook was accepted");
+    const std::wstring missing_tree = temp_dir() + L"\\missing";
+    const std::wstring installed_tree = temp_dir();
+    check(doomnet::write_new_file(installed_tree + L"\\skin.json", "{}\n", 3, error), "installed skin marker");
+    check(doomnet::first_existing_marker(missing_tree, installed_tree, L"skin.json") == installed_tree, "an installed skin was ignored when the source repo is not on the machine");
+    check(doomnet::first_existing_marker(installed_tree, missing_tree, L"skin.json") == installed_tree, "the source repo did not win over an installed copy");
 
     // NUL-delimited DevTools message over a named pipe, the same shape the
     // relay will carry once Steam is started.
@@ -723,6 +1031,24 @@ void test_instance() {
             check(text.find("exiting without starting Steam") != std::string::npos, "duplicate process did not say it would not start Steam");
         }
     }
+
+    std::wstring install_command = L"\"" + exe + L"\" --install --player --steam \"C:\\no-such-steam\"";
+    std::vector<wchar_t> install_mutable(install_command.begin(), install_command.end());
+    install_mutable.push_back(L'\0');
+    PROCESS_INFORMATION install_process{};
+    const BOOL install_created = CreateProcessW(exe.c_str(), install_mutable.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &startup, &install_process);
+    check(install_created == TRUE, "could not start DoomNet.exe --install while the mutex is held");
+    if (install_created) {
+        const DWORD install_waited = WaitForSingleObject(install_process.hProcess, 2000);
+        DWORD install_code = 0;
+        GetExitCodeProcess(install_process.hProcess, &install_code);
+        CloseHandle(install_process.hThread);
+        CloseHandle(install_process.hProcess);
+        check(install_waited == WAIT_OBJECT_0 && install_code == 1, "install while DoomNet is already running exited as success");
+        std::string install_result;
+        std::wstring install_error;
+        check(doomnet::read_entire_file(root + L"\\install-result.txt", install_result, install_error) && install_result.find("Nothing was copied") != std::string::npos, "install while DoomNet is already running did not write that nothing was copied");
+    }
 }
 
 void test_skin_page() {
@@ -829,6 +1155,48 @@ void test_skin_page() {
               patched_ui.find("state.pingMs + \" ms to host\"") != std::string::npos &&
               patched_ui.find("smp-track-list doomnet-party-roster") != std::string::npos,
           "the Listening Party page does not harden End Session or show its room status");
+    check(patched_ui.find("doomnetListenerParty") != std::string::npos &&
+              patched_ui.find("return \"Listening Party\"") != std::string::npos &&
+              patched_ui.find("text: \"Leave Session\"") != std::string::npos &&
+              patched_ui.find("UI.doomnetRenderParty(pane)") != std::string::npos &&
+              patched_ui.find("doomnetRestoreLocalPlayback") != std::string::npos &&
+              patched_ui.find("engine.play()") != std::string::npos &&
+              patched_ui.find("state.role === \"listener\"") != std::string::npos &&
+              patched_ui.find("btn.disabled = enabled === false") != std::string::npos &&
+              patched_ui.find("Leave the current party before starting one") != std::string::npos &&
+              patched_ui.find("startHost && UI.doomnetListenerParty()") != std::string::npos,
+          "a listener session does not replace Now Playing or restore the local player on Leave Session");
+    check(patched_ui.find("settingsTabList.push({ key: \"store\", label: \"Store\" })") != std::string::npos &&
+              patched_ui.find("UI.doomnetRenderStore(view)") != std::string::npos &&
+              patched_ui.find("doomnet_install_app") != std::string::npos &&
+              patched_ui.find("app.id === \"steamskin\"") != std::string::npos &&
+              patched_ui.find("button.disabled = true") != std::string::npos &&
+              patched_ui.find("SteamSkin is already installed") != std::string::npos &&
+              patched_ui.find("The player's saved color stays as it is.") != std::string::npos,
+          "Settings has no DoomNet Store tab");
+    check(patched_ui.find("pick_music_folder") != std::string::npos && patched_ui.find("and the folders inside it") != std::string::npos,
+          "Add Folder still asks the page for a path, so the chosen music folder is never saved");
+    {
+        std::string library_source;
+        std::wstring library_error;
+        const bool library_read = doomnet::read_entire_file(L"D:\\Documents\\Repos\\SteamTunes\\backend\\library.lua", library_source, library_error);
+        check(library_read, "library.lua was not read");
+        if (library_read) {
+            const std::string patched = doomnet::patched_player_module("library", library_source);
+            check(patched.find("entry.is_directory") != std::string::npos && patched.find("and every folder inside it") != std::string::npos && patched.find("not entry.is_file") != std::string::npos,
+                  "the scan still does not walk folders inside the music folder");
+        }
+        std::string main_source;
+        std::wstring main_error;
+        const bool main_read = doomnet::read_entire_file(L"D:\\Documents\\Repos\\SteamTunes\\backend\\main.lua", main_source, main_error);
+        check(main_read, "main.lua was not read");
+        if (main_read) {
+            const std::string patched_main = doomnet::patched_player_module("main", main_source);
+            check(patched_main.find("folder = result.folder") != std::string::npos, "a scan result still omits the music folder, so the page cannot name it");
+            check(patched_main.find("doomnet_stream_hook") != std::string::npos && patched_main.find("url_encode_segment(tostring(track.id))") != std::string::npos,
+                  "a play still copies the song into steamui");
+        }
+    }
     check(doomnet::patched_player_css_text().find(".doomnet-party-slot{display:flex;align-items:center;gap:4px;margin-left:auto;}") != std::string::npos &&
               doomnet::patched_player_css_text().find(".doomnet-party-code{") != std::string::npos &&
               doomnet::patched_player_css_text().find("color:var(--smp-accent)") != std::string::npos,
@@ -1083,6 +1451,43 @@ bool write_test_bmp(const std::wstring& path, int width, int height) {
     return doomnet::write_new_file(path, reinterpret_cast<const char*>(file.data()), file.size(), error);
 }
 
+void test_stream_file() {
+    wchar_t saved_root[32768] = {};
+    const DWORD saved_n = GetEnvironmentVariableW(L"DOOMNET_ROOT", saved_root, 32768);
+    const std::wstring dir = temp_dir();
+    SetEnvironmentVariableW(L"DOOMNET_ROOT", dir.c_str());
+    check(doomnet::ensure_directory(dir + L"\\player"), "player data folder");
+    check(doomnet::ensure_directory(dir + L"\\player\\backend"), "player backend folder");
+    check(doomnet::ensure_directory(dir + L"\\player\\backend\\data"), "player data folder");
+    std::wstring error;
+    const std::string token = "abcdef0123456789";
+    check(doomnet::write_new_file(dir + L"\\player\\backend\\data\\media_token", token.data(), token.size(), error), "the playback token was not written");
+    const std::wstring song = dir + L"\\song.mp3";
+    const std::string bytes = "sound";
+    check(doomnet::write_new_file(song, bytes.data(), bytes.size(), error), "the dummy song was not written");
+    const std::string index = std::string("[{\"id\":\"track1\",\"path\":") + doomnet::json_quote(doomnet::wide_to_utf8(song)) + ",\"size\":5}]";
+    check(doomnet::write_new_file(dir + L"\\player\\backend\\data\\library_index.json", index.data(), index.size(), error), "library_index.json was not written");
+    const std::string url = "https://steamloopback.host/steam-music-player/stream/" + token + "/track1";
+    const doomnet::StreamReply whole = doomnet::serve_stream_url(url);
+    check(whole.status == 200 && whole.body == bytes && whole.content_type == "audio/mpeg", "a play did not return the original file");
+    const doomnet::StreamReply ranged = doomnet::serve_stream_url(url, "bytes=1-3");
+    check(ranged.status == 206 && ranged.body == "oun" && ranged.content_range == "bytes 1-3/5", "a range request did not return that slice");
+    const doomnet::StreamReply missing = doomnet::serve_stream_url("https://steamloopback.host/steam-music-player/stream/" + token + "/missing");
+    check(missing.status == 404, "a missing track id was served");
+    const doomnet::StreamReply wrong = doomnet::serve_stream_url("https://steamloopback.host/steam-music-player/stream/abcdef0123456780/track1");
+    check(wrong.status == 404, "a wrong playback token was served");
+    const doomnet::StreamReply climb = doomnet::serve_stream_url("https://steamloopback.host/steam-music-player/stream/" + token + "/%2e%2e/%2e%2e/steamui/x");
+    check(climb.status == 404, "an address containing .. was served");
+    const doomnet::StreamReply drive = doomnet::serve_stream_url("https://steamloopback.host/steam-music-player/stream/" + token + "/C:");
+    check(drive.status == 404, "a drive letter in the address was served");
+    check(GetFileAttributesW((dir + L"\\steamui").c_str()) == INVALID_FILE_ATTRIBUTES, "serving the song created a steamui folder");
+    if (saved_n > 0 && saved_n < 32768) {
+        SetEnvironmentVariableW(L"DOOMNET_ROOT", saved_root);
+    } else {
+        SetEnvironmentVariableW(L"DOOMNET_ROOT", nullptr);
+    }
+}
+
 void test_playback_queue() {
     doomnet::Bus bus;
     doomnet::CallMsg artwork;
@@ -1137,6 +1542,7 @@ int main() {
     test_paths();
     test_config();
     test_streamtunes_identity();
+    test_update_gate();
     test_color();
     test_log_threads();
     test_steam();
@@ -1149,6 +1555,7 @@ int main() {
     test_launch_inject();
     test_skin_page();
     test_art_thumbs();
+    test_stream_file();
     test_playback_queue();
     test_instance();
     if (g_failed != 0) {

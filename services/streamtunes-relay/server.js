@@ -82,6 +82,7 @@ function createRelayServer(options) {
 			socket.ping();
 		}
 	}, 30000);
+	if (typeof heartbeat.unref === "function") heartbeat.unref();
 
 	sockets.on("close", () => clearInterval(heartbeat));
 	return { server, sockets, registry };

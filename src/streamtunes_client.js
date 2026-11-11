@@ -63,6 +63,11 @@
 		this.onRemoteStream = options.onRemoteStream || function () {};
 		this.onRemoteStop = options.onRemoteStop || function () {};
 		this.onNotice = options.onNotice || function () {};
+		this.reconnectMs = options.reconnectMs == null ? 15000 : Math.max(0, Number(options.reconnectMs));
+		if (!Number.isFinite(this.reconnectMs)) this.reconnectMs = 15000;
+		this.setTimeoutImpl = options.setTimeout || setTimeout;
+		this.clearTimeoutImpl = options.clearTimeout || clearTimeout;
+		this.peerReconnect = new Map();
 		this.socket = null;
 		this.queue = [];
 		this.listeners = [];
@@ -221,15 +226,13 @@
 	};
 
 	StreamTunesClient.prototype.end = function () {
-		if (this.active && this.role === "host") this.send({ type: "end" });
-		this.closedByUser = true;
+		this.disconnectRelay(this.active && this.role === "host" ? "end" : null);
 		this.reset();
 		return Promise.resolve();
 	};
 
 	StreamTunesClient.prototype.leave = function () {
-		if (this.active && this.role === "listener") this.send({ type: "leave" });
-		this.closedByUser = true;
+		this.disconnectRelay(this.active && this.role === "listener" ? "leave" : null);
 		this.reset();
 		return Promise.resolve();
 	};
@@ -242,7 +245,16 @@
 			if (event.candidate) self.send({ type: "signal", to: peerId, data: { candidate: event.candidate } });
 		};
 		peer.onconnectionstatechange = function () {
-			if (peer.connectionState === "failed") self.fail("Connection Lost");
+			var state = peer.connectionState;
+			if (state === "connected" || state === "connecting") {
+				self.clearPeerReconnect(peerId);
+				return;
+			}
+			if (state !== "disconnected" && state !== "failed") {
+				return;
+			}
+			// Brief blips get a reconnect window before the party tears down.
+			self.armPeerReconnect(peerId);
 		};
 		if (hosting && this.hostStream) {
 			this.hostStream.getTracks().forEach(function (track) { peer.addTrack(track, self.hostStream); });
@@ -339,6 +351,7 @@
 		this.stopStats();
 		var self = this;
 		this.statsTimer = setInterval(function () { self.sampleStats(); }, 1000);
+		if (this.statsTimer && typeof this.statsTimer.unref === "function") this.statsTimer.unref();
 	};
 
 	StreamTunesClient.prototype.sampleStats = async function () {
@@ -371,7 +384,44 @@
 		this.statsAt = 0;
 	};
 
+	StreamTunesClient.prototype.clearPeerReconnect = function (peerId) {
+		var timer = this.peerReconnect.get(peerId);
+		if (timer) this.clearTimeoutImpl(timer);
+		this.peerReconnect.delete(peerId);
+	};
+
+	StreamTunesClient.prototype.clearAllPeerReconnect = function () {
+		var self = this;
+		Array.from(this.peerReconnect.keys()).forEach(function (peerId) {
+			self.clearPeerReconnect(peerId);
+		});
+	};
+
+	StreamTunesClient.prototype.armPeerReconnect = function (peerId) {
+		if (this.peerReconnect.has(peerId)) return;
+		var self = this;
+		var finish = function () {
+			self.peerReconnect.delete(peerId);
+			var peer = self.peers.get(peerId);
+			if (!peer) return;
+			var state = peer.connectionState;
+			if (state === "connected" || state === "connecting") return;
+			if (self.role === "host") {
+				self.closePeer(peerId);
+				return;
+			}
+			self.fail("Connection Lost");
+		};
+		if (this.reconnectMs <= 0) {
+			finish();
+			return;
+		}
+		var timer = this.setTimeoutImpl(finish, this.reconnectMs);
+		this.peerReconnect.set(peerId, timer);
+	};
+
 	StreamTunesClient.prototype.closePeer = function (peerId) {
+		this.clearPeerReconnect(peerId);
 		var peer = this.peers.get(peerId);
 		if (!peer) return;
 		try { peer.close(); } catch (error) {}
@@ -379,6 +429,7 @@
 	};
 
 	StreamTunesClient.prototype.reset = function () {
+		this.clearAllPeerReconnect();
 		this.stopStats();
 		for (var peerId of Array.from(this.peers.keys())) this.closePeer(peerId);
 		this.onRemoteStop();
@@ -393,8 +444,27 @@
 		this.publish();
 	};
 
+	StreamTunesClient.prototype.disconnectRelay = function (action) {
+		var socket = this.socket;
+		if (socket && socket.readyState === 1) {
+			if (action === "leave" && this.active && this.role === "listener") {
+				try { socket.send(JSON.stringify({ type: "leave" })); } catch (error) {}
+			} else if (action === "end" && this.active && this.role === "host") {
+				try { socket.send(JSON.stringify({ type: "end" })); } catch (error) {}
+			}
+		}
+		this.closedByUser = true;
+		this.queue.length = 0;
+		if (socket) {
+			try { socket.close(); } catch (error) {}
+		}
+		this.socket = null;
+	};
+
 	StreamTunesClient.prototype.fail = function (message) {
 		this.rejectPending(new Error(message || "Stream Error"));
+		var action = this.role === "host" ? "end" : (this.role === "listener" ? "leave" : null);
+		this.disconnectRelay(action);
 		this.reset();
 		if (message) this.onNotice(message);
 	};

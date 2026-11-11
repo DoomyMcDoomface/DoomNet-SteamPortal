@@ -5,6 +5,7 @@
 #include "page_bridge.h"
 #include "skin_page.h"
 #include "steam_discover.h"
+#include "stream.h"
 #include "text.h"
 
 #include <windows.h>
@@ -567,6 +568,7 @@ struct SteamPage::Impl {
             if (main_window) {
                 display_session = session;
                 log_event(L"info", L"inject", (L"Skin checks will use session '" + utf8_to_wide_lossy(session) + L"' because its title is Steam.").c_str());
+                arm_stream_fetch(session);
             }
         }
     }
@@ -792,6 +794,66 @@ struct SteamPage::Impl {
         log_event(L"info", L"inject", (L"Store session '" + utf8_to_wide_lossy(session) + L"' will serve the same covers the library loads.").c_str());
     }
 
+    std::vector<std::string> stream_sessions;
+
+    void arm_stream_fetch(const std::string& session) {
+        if (session.empty()) {
+            return;
+        }
+        for (const std::string& seen : stream_sessions) {
+            if (seen == session) {
+                return;
+            }
+        }
+        std::string reply;
+        std::wstring error;
+        const char* params = "{\"patterns\":[{\"urlPattern\":\"*steamloopback.host/steam-music-player/stream/*\",\"requestStage\":\"Request\"}]}";
+        if (!pipe.call_in_session(session, "Fetch.enable", params, reply, error)) {
+            log_event(L"warn", L"stream", (L"Could not serve original music files in session '" + utf8_to_wide_lossy(session) + L"'. " + error).c_str());
+            return;
+        }
+        stream_sessions.push_back(session);
+        set_stream_hook(true);
+        log_event(L"info", L"stream", (L"Play will read the original file for session '" + utf8_to_wide_lossy(session) + L"' and will not copy it into steamui.").c_str());
+    }
+
+    std::string request_range(const Json* request) {
+        if (request == nullptr) {
+            return {};
+        }
+        const Json* headers = request->find("headers");
+        if (headers == nullptr || headers->type != Json::Type::Array) {
+            return {};
+        }
+        for (const Json& header : headers->a) {
+            const std::string name = header.key_string("name");
+            if (name.size() == 5 && _stricmp(name.c_str(), "range") == 0) {
+                return header.key_string("value");
+            }
+        }
+        return {};
+    }
+
+    void fulfill_stream(const std::string& session, const std::string& request_id, const std::string& url, const std::string& range_header) {
+        const StreamReply served = serve_stream_url(url, range_header);
+        std::string headers = std::string("[{\"name\":\"Content-Type\",\"value\":") + json_quote(served.content_type.empty() ? "text/plain" : served.content_type) + "},{\"name\":\"Content-Length\",\"value\":" + json_quote(std::to_string(served.body.size())) + "},{\"name\":\"Access-Control-Allow-Origin\",\"value\":\"*\"},{\"name\":\"Cache-Control\",\"value\":\"no-store\"}";
+        if (!served.content_range.empty()) {
+            headers += std::string(",{\"name\":\"Content-Range\",\"value\":") + json_quote(served.content_range) + "}";
+        }
+        headers += "]";
+        const std::string params = std::string("{\"requestId\":") + json_quote(request_id) + ",\"responseCode\":" + std::to_string(served.status) + ",\"responseHeaders\":" + headers + ",\"body\":" + json_quote(cover_base64(served.body)) + "}";
+        std::string reply;
+        std::wstring error;
+        if (!write_call(session, "Fetch.fulfillRequest", params, reply, error)) {
+            std::wstring shown = served.detail.empty() ? utf8_to_wide_lossy(url) : served.detail;
+            if (shown.size() > 180) {
+                shown.resize(180);
+            }
+            log_event(L"warn", L"stream", (L"Could not give the page '" + shown + L"'. " + error).c_str());
+            continue_request(session, request_id);
+        }
+    }
+
     void continue_request(const std::string& session, const std::string& request_id) {
         std::string reply;
         std::wstring error;
@@ -836,6 +898,16 @@ struct SteamPage::Impl {
         const std::string url = request != nullptr ? request->key_string("url") : std::string();
         if (url.find("steam-music-player/art/") != std::string::npos) {
             fulfill_cover(session, request_id, url);
+            return;
+        }
+        std::string lowered = url;
+        for (char& ch : lowered) {
+            if (ch >= 'A' && ch <= 'Z') {
+                ch = static_cast<char>(ch - 'A' + 'a');
+            }
+        }
+        if (lowered.find("steam-music-player/stream/") != std::string::npos) {
+            fulfill_stream(session, request_id, url, request_range(request));
             return;
         }
         // Anything else must be released at once. Holding a store document froze the library tab.
