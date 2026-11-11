@@ -211,6 +211,14 @@ void prepare_installed_files(const std::wstring& steam, const Config& config) {
     if (copied_assets > 0) {
         log_event(L"info", L"payload", (L"Copied " + std::to_wstring(copied_assets) + L" player file(s) into '" + steam + L"\\steamui\\steam-music-player'.").c_str());
     }
+    const std::string patched_bootstrap = patched_player_bootstrap_text();
+    if (!patched_bootstrap.empty()) {
+        std::wstring write_error;
+        const std::wstring published_bootstrap = steam + L"\\steamui\\steam-music-player\\bootstrap.js";
+        if (!write_new_file(published_bootstrap, patched_bootstrap.data(), patched_bootstrap.size(), write_error) && !write_error.empty()) {
+            log_event(L"warn", L"payload", write_error.c_str());
+        }
+    }
     const std::string patched = patched_player_ui_text();
     if (!patched.empty()) {
         std::wstring write_error;

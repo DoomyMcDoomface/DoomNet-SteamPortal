@@ -430,6 +430,25 @@ void repair_party_buttons(std::string& ui) {
     }
 }
 
+std::string patched_player_bootstrap_text() {
+    const std::wstring dir = player_asset_dir();
+    std::string text = read_skin_text(dir, "bootstrap.js");
+    if (text.empty()) {
+        return {};
+    }
+    const std::string old_rev = "var ASSET_REV = \"20261027-version-1.15.0\"";
+    const std::string new_rev = "var ASSET_REV = \"20261111-version-1.16.0\"";
+    const size_t at = text.find(old_rev);
+    if (at == std::string::npos) {
+        if (text.find("20261111-version-1.16.0") == std::string::npos) {
+            log_event(L"warn", L"inject", L"The player loader still uses version 1.15.0, so Steam can keep showing the old page.");
+        }
+    } else {
+        text.replace(at, old_rev.size(), new_rev);
+    }
+    return text;
+}
+
 std::string patched_player_ui_text() {
     const std::wstring dir = player_asset_dir();
     std::string ui = read_skin_text(dir, "steam-music-player.js");
@@ -444,6 +463,11 @@ std::string patched_player_ui_text() {
         }
     }
     ui.swap(normalized);
+    const std::string old_plugin_version = "var PLUGIN_VERSION = \"1.15.0\"";
+    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.16.0\"";
+    for (size_t at = 0; (at = ui.find(old_plugin_version, at)) != std::string::npos; at += new_plugin_version.size()) {
+        ui.replace(at, old_plugin_version.size(), new_plugin_version);
+    }
     const std::string old_overlay_dock = "\t\t\"z-index:2147483000}\",\n\t].join(\"\");";
     const std::string new_overlay_dock =
         "\t\t\"z-index:2147483000}\",\n"
