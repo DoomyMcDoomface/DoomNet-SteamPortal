@@ -303,6 +303,10 @@ void run_attach(HANDLE stop, const std::wstring& root, const std::wstring& steam
             if (!state->wait_loaded(120000)) {
                 log_event(L"warn", L"lua", L"The Lua host did not finish loading within 120 seconds. The player may answer late.");
             }
+            if (!steam.empty()) {
+                prepare_installed_files(steam, config);
+                log_event(L"info", L"payload", L"Wrote version 1.16.0 into steamui after the player started. That page has the scan and the listening-party button. It is not a copy of 1.15.0.");
+            }
         }
     } else if (!browser_error.empty()) {
         log_event(L"error", L"browser", browser_error.c_str());

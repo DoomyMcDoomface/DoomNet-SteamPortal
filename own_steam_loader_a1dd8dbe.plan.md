@@ -244,7 +244,7 @@ The visible client window is often an `about:blank` popup opened by another Stea
 
 `ASSET_FILES` in [backend/main.lua](backend/main.lua) copies bootstrap, the css, `audio-engine.js`, and `steam-music-player.js`. It does not copy `mix-image.js`. The missing file 404s, the element is removed, and the chain still continues, so the player comes up without the mix image. DoomNet's copy includes `mix-image.js`. It does not copy `mix-image-test.js`.
 
-`ASSET_REV` in the SteamTunes source is `20261027-version-1.15.0`. CEF caches these URLs. DoomNet does not edit that source file. When it loads the player it rewrites the bootstrap cache name to `20261111-version-1.16.0` and the About line to version 1.16.0, so Steam fetches this page instead of the cached 1.15.0 page.
+`ASSET_REV` in the SteamTunes source is `20261027-version-1.15.0`. CEF caches these URLs. DoomNet does not edit that source file. The player copies those 1.15.0 files into steamui on startup. After that copy, DoomNet writes its own page back: version 1.16.0, the scan, and the listening-party button. The bootstrap cache name is `20261111-version-1.16.0`, so Steam loads that page instead of a cached 1.15.0 page.
 
 Role detection uses `document.title`: `Steam` and `SteamBrowser_Find` are the client; `OverlayTab<N>_Find` and `SP Overlay:` are the in-game overlay. The client owns `AudioContext`. Overlay pages are remotes. They share state through `set_ui_pointer` / `get_player_state` and `transport_command`.
 

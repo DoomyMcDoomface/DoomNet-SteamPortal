@@ -1213,7 +1213,16 @@ void test_skin_page() {
               patched_ui.find("Leave the current party before starting one") != std::string::npos &&
               patched_ui.find("startHost && UI.doomnetListenerParty()") != std::string::npos,
           "a listener session does not replace Now Playing or restore the local player on Leave Session");
-    check(patched_ui.find("var PLUGIN_VERSION = \"1.16.0\"") != std::string::npos && patched_ui.find("var PLUGIN_VERSION = \"1.15.0\"") == std::string::npos, "the About page still says version 1.15.0");
+    check(patched_ui.find("var PLUGIN_VERSION = \"1.16.0\"") != std::string::npos && patched_ui.find("var PLUGIN_VERSION = \"1.15.0\"") == std::string::npos && patched_ui.find("Start Listening Party") != std::string::npos && patched_ui.find("tagCount") != std::string::npos, "version 1.16.0 is only a label and does not include the listening party or the scan");
+    {
+        const std::string stock_sync =
+            "local function sync_assets_to_steamui()\n"
+            "\tlocal destDir = fs.join(steamui_dir(), INJECT_SUBDIR)\n";
+        const std::string kept = doomnet::patched_player_module("main", stock_sync);
+        const size_t stop_copy = kept.find("The original 1.15.0 files were not copied over it.");
+        const size_t copy_again = kept.find("local destDir");
+        check(stop_copy != std::string::npos && copy_again != std::string::npos && stop_copy < copy_again, "the player still copies version 1.15.0 over the 1.16.0 page");
+    }
     check(doomnet::patched_player_bootstrap_text().find("var ASSET_REV = \"20261111-version-1.16.0\"") != std::string::npos && doomnet::patched_player_bootstrap_text().find("20261027-version-1.15.0") == std::string::npos, "the player files are still cached as version 1.15.0");
     check(patched_ui.find("settingsTabList.push({ key: \"store\", label: \"Store\" })") != std::string::npos &&
               patched_ui.find("UI.doomnetRenderStore(view)") != std::string::npos &&

@@ -1264,6 +1264,22 @@ std::string patched_player_module(const std::string& module, std::string source)
         return source;
     }
     if (module == "main") {
+        const std::string old_sync =
+            "local function sync_assets_to_steamui()\n"
+            "\tlocal destDir = fs.join(steamui_dir(), INJECT_SUBDIR)\n";
+        const std::string new_sync =
+            "local function sync_assets_to_steamui()\n"
+            "\tlogger:info(\"[SteamMusicPlayer] Left the DoomNet 1.16.0 player in steamui. The original 1.15.0 files were not copied over it.\")\n"
+            "\treturn\n"
+            "\tlocal destDir = fs.join(steamui_dir(), INJECT_SUBDIR)\n";
+        const size_t sync_at = source.find(old_sync);
+        if (sync_at == std::string::npos) {
+            if (source.find("sync_assets_to_steamui") != std::string::npos) {
+                log_event(L"warn", L"lua", L"The player can still copy version 1.15.0 over the page after DoomNet writes 1.16.0.");
+            }
+        } else {
+            source.replace(sync_at, old_sync.size(), new_sync);
+        }
         const std::string old_lists =
             "function get_playlists()\n"
             "\treturn json.encode(playlists.get_all())\n"
