@@ -493,10 +493,10 @@ std::string patched_player_bootstrap_text() {
         return {};
     }
     const std::string old_rev = "var ASSET_REV = \"20261027-version-1.15.0\"";
-    const std::string new_rev = "var ASSET_REV = \"20261112-version-1.16.4-reopen-steam\"";
+    const std::string new_rev = "var ASSET_REV = \"20261112-version-1.16.5-restart-row\"";
     const size_t at = text.find(old_rev);
     if (at == std::string::npos) {
-        if (text.find("20261112-version-1.16.4-reopen-steam") == std::string::npos) {
+        if (text.find("20261112-version-1.16.5-restart-row") == std::string::npos) {
             log_event(L"warn", L"inject", L"The player loader still uses version 1.15.0, so Steam can keep showing the old page.");
         }
     } else {
@@ -520,7 +520,7 @@ std::string patched_player_ui_text() {
     }
     ui.swap(normalized);
     const std::string old_plugin_version = "var PLUGIN_VERSION = \"1.15.0\"";
-    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.16.4\"";
+    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.16.5\"";
     for (size_t at = 0; (at = ui.find(old_plugin_version, at)) != std::string::npos; at += new_plugin_version.size()) {
         ui.replace(at, old_plugin_version.size(), new_plugin_version);
     }
@@ -4649,7 +4649,8 @@ std::string patched_player_css_text() {
         ".smp-eq-fader-label{margin-top:6px;color:var(--smp-text-dim);font-size:9px;font-weight:400;letter-spacing:0.02em;}\n"
         ".smp-settings-slider{flex:0 1 240px;width:240px;max-width:240px;accent-color:var(--smp-accent);}\n"
         "#doomnet-steamtunes-host .smp-view-settings{padding-left:16px;box-sizing:border-box;}\n"
-        "#doomnet-steamtunes-host .smp-view-settings .smp-settings-section>.smp-btn{margin-top:28px;}\n"
+        "#doomnet-steamtunes-host .smp-view-settings .smp-collapse-heading{display:flex;width:100%;}\n"
+        "#doomnet-steamtunes-host .smp-view-settings .smp-settings-section>.smp-btn{display:block;width:fit-content;margin-top:28px;}\n"
         "#doomnet-steamtunes-host .smp-view-settings .smp-settings-section>.smp-hint{white-space:pre-line;}\n"
         ".smp-settings-readout{width:36ch;min-width:36ch;max-width:36ch;flex:0 0 36ch;overflow:hidden;white-space:nowrap;text-align:left;}\n"
         ".smp-folder-path{flex:0 1 auto;min-width:0;}\n"
