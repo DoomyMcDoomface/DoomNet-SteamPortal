@@ -886,10 +886,10 @@ std::string patched_player_bootstrap_text() {
         return {};
     }
     const std::string old_rev = "var ASSET_REV = \"20261027-version-1.15.0\"";
-    const std::string new_rev = "var ASSET_REV = \"20261112-version-1.18.1-skin-stays\"";
+    const std::string new_rev = "var ASSET_REV = \"20261112-version-1.18.2-playing-row\"";
     const size_t at = text.find(old_rev);
     if (at == std::string::npos) {
-        if (text.find("20261112-version-1.18.1-skin-stays") == std::string::npos) {
+        if (text.find("20261112-version-1.18.2-playing-row") == std::string::npos) {
             log_event(L"warn", L"inject", L"The player loader still uses version 1.15.0, so Steam can keep showing the old page.");
         }
     } else {
@@ -913,7 +913,7 @@ std::string patched_player_ui_text() {
     }
     ui.swap(normalized);
     const std::string old_plugin_version = "var PLUGIN_VERSION = \"1.15.0\"";
-    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.18.1\"";
+    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.18.2\"";
     for (size_t at = 0; (at = ui.find(old_plugin_version, at)) != std::string::npos; at += new_plugin_version.size()) {
         ui.replace(at, old_plugin_version.size(), new_plugin_version);
     }
@@ -3148,6 +3148,42 @@ std::string patched_player_ui_text() {
         log_event(L"warn", L"inject", L"The player UI did not add Add to playlist on an album, so the album's songs cannot be saved together.");
     }
     keep_one_repeated_block(ui, album_playlist_button);
+    const std::string old_playing_row =
+        "\t\t\tvar currentIndex = opts.currentIndex;\n"
+        "\t\t\tvar row = el(\"div\", \"smp-track-row\" + (currentIndex === idx ? \" current\" : \"\"));\n"
+        "\t\t\trow.setAttribute(\"data-queue-index\", String(idx));\n";
+    const std::string new_playing_row =
+        "\t\t\tvar currentIndex = opts.currentIndex;\n"
+        "\t\t\tvar playingId = typeof currentTrackId === \"function\" ? currentTrackId() : null;\n"
+        "\t\t\tvar playingRow = playingId != null && playingId !== \"\" && track && sameTrackId(track.id, playingId);\n"
+        "\t\t\tvar row = el(\"div\", \"smp-track-row\" + (playingRow ? \" current\" : \"\"));\n"
+        "\t\t\trow.setAttribute(\"data-queue-index\", String(idx));\n"
+        "\t\t\tif (track && track.id != null && track.id !== \"\") {\n"
+        "\t\t\t\trow.setAttribute(\"data-track-id\", String(track.id));\n"
+        "\t\t\t}\n";
+    const size_t playing_row_at = ui.find(old_playing_row);
+    if (playing_row_at != std::string::npos) {
+        ui.replace(playing_row_at, old_playing_row.size(), new_playing_row);
+    } else {
+        log_event(L"warn", L"inject", L"The player UI did not mark the playing song, so the accent stays on the song that was playing when the list was drawn.");
+    }
+    const std::string old_paint_playing =
+        "\t\tpaintPlaybackUi: function () {\n"
+        "\t\t\tUI.safely(\"renderNowPlaying\", UI.renderNowPlaying);\n"
+        "\t\t\tUI.refreshNowPlayingIfVisible();\n";
+    const std::string new_paint_playing =
+        "\t\tpaintPlaybackUi: function () {\n"
+        "\t\t\tUI.safely(\"renderNowPlaying\", UI.renderNowPlaying);\n"
+        "\t\t\tUI.refreshNowPlayingIfVisible();\n"
+        "\t\t\tif (UI.doomnetMarkPlayingRow) {\n"
+        "\t\t\t\tUI.doomnetMarkPlayingRow();\n"
+        "\t\t\t}\n";
+    const size_t paint_playing_at = ui.find(old_paint_playing);
+    if (paint_playing_at != std::string::npos) {
+        ui.replace(paint_playing_at, old_paint_playing.size(), new_paint_playing);
+    } else {
+        log_event(L"warn", L"inject", L"The player UI did not refresh the playing song highlight when the song changed.");
+    }
     const std::string old_playlist_name = "var name = el(\"span\", \"smp-playlist-name\", { text: (playlist.name || \"Untitled\") + \" (\" + trackCount + \")\" });";
     const std::string new_playlist_name =
         "var name = el(\"button\", \"smp-playlist-name\", { type: \"button\", text: (playlist.name || \"Untitled\") + \" (\" + trackCount + \")\" });\n"
@@ -3385,8 +3421,29 @@ std::string patched_player_ui_text() {
         "\t\t\t\treturn callServer(\"get_playlists\");\n"
         "\t\t\t}).then(function (list) {\n"
         "\t\t\t\tApp.playlists = asArray(list);\n"
+        "\t\t\t\tif (UI.libraryGroupBy !== \"playlists\") {\n"
+        "\t\t\t\t\treturn;\n"
+        "\t\t\t\t}\n"
+        "\t\t\t\tvar pane = UI.libraryScrollEl();\n"
+        "\t\t\t\tUI.doomnetKeepPlaylistScroll = pane ? pane.scrollTop : 0;\n"
         "\t\t\t\tUI.safely(\"renderLibrary\", UI.renderLibrary);\n"
         "\t\t\t});\n"
+        "\t\t},\n"
+        "\n"
+        "\t\tdoomnetMarkPlayingRow: function () {\n"
+        "\t\t\tvar playing = typeof currentTrackId === \"function\" ? currentTrackId() : null;\n"
+        "\t\t\tvar rows = document.querySelectorAll(\".smp-track-row\");\n"
+        "\t\t\tvar i;\n"
+        "\t\t\tfor (i = 0; i < rows.length; i++) {\n"
+        "\t\t\t\tvar row = rows[i];\n"
+        "\t\t\t\tvar id = row.getAttribute(\"data-track-id\");\n"
+        "\t\t\t\tvar on = playing != null && playing !== \"\" && id != null && sameTrackId(id, playing);\n"
+        "\t\t\t\tif (on) {\n"
+        "\t\t\t\t\trow.classList.add(\"current\");\n"
+        "\t\t\t\t} else {\n"
+        "\t\t\t\t\trow.classList.remove(\"current\");\n"
+        "\t\t\t\t}\n"
+        "\t\t\t}\n"
         "\t\t},\n"
         "\n"
         "\t\tdoomnetOpenPlaylistMenu: function (anchor, trackIds) {\n"
@@ -3657,7 +3714,7 @@ std::string patched_player_ui_text() {
     const std::string new_playlist_scroll =
         "\t\t\tUI.detachBrowsePages();\n"
         "\t\t\tvar doomnetPlaylistScroll = null;\n"
-        "\t\t\tif (UI.libraryGroupBy === \"playlists\" && UI.libraryDrill && UI.libraryDrill.mode === \"playlistTracks\" && typeof UI.doomnetKeepPlaylistScroll === \"number\") {\n"
+        "\t\t\tif (UI.libraryGroupBy === \"playlists\" && typeof UI.doomnetKeepPlaylistScroll === \"number\") {\n"
         "\t\t\t\tdoomnetPlaylistScroll = UI.doomnetKeepPlaylistScroll;\n"
         "\t\t\t\tUI.doomnetKeepPlaylistScroll = null;\n"
         "\t\t\t}\n"
@@ -5298,7 +5355,10 @@ std::string patched_player_css_text() {
         "button.smp-playlist-name{background:transparent;border:0;color:inherit;font:inherit;text-align:left;cursor:pointer;padding:0;}\n"
         "#doomnet-steamtunes-host .smp-playlist-create{display:flex;align-items:center;gap:8px;}\n"
         "#doomnet-steamtunes-host .smp-playlist-name-input{flex:0 1 50%;width:50%;max-width:50%;}\n"
-        "#doomnet-steamtunes-host .smp-playlist-create-actions{margin-left:auto;display:flex;align-items:center;gap:8px;flex:0 0 auto;}\n";
+        "#doomnet-steamtunes-host .smp-playlist-create-actions{margin-left:auto;display:flex;align-items:center;gap:8px;flex:0 0 auto;}\n"
+        "#doomnet-steamtunes-host .smp-track-row.current{background:var(--smp-accent-soft) !important;box-shadow:inset 3px 0 0 var(--smp-accent);}\n"
+        "#doomnet-steamtunes-host .smp-track-row.current:hover{background:var(--smp-accent-soft) !important;}\n"
+        "#doomnet-steamtunes-host .smp-track-row.current .smp-track-name{color:var(--smp-accent) !important;}\n";
     return css;
 }
 
