@@ -145,6 +145,23 @@ bool parse_release_manifest(const std::string& json, ReleaseManifest& out, std::
     return true;
 }
 
+bool host_file_is_newer_than_this_process(const std::wstring& exe_path) {
+    WIN32_FILE_ATTRIBUTE_DATA info{};
+    if (!GetFileAttributesExW(exe_path.c_str(), GetFileExInfoStandard, &info)) {
+        log_event(L"warn", L"installer", (L"Could not read the time of '" + exe_path + L"'. " + windows_error_text(GetLastError())).c_str());
+        return false;
+    }
+    FILETIME created{};
+    FILETIME exited{};
+    FILETIME kernel{};
+    FILETIME user{};
+    if (!GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user)) {
+        log_event(L"warn", L"installer", (L"Could not read when this copy of DoomNet started. " + windows_error_text(GetLastError())).c_str());
+        return false;
+    }
+    return CompareFileTime(&info.ftLastWriteTime, &created) > 0;
+}
+
 UpdatePlan updates_needed(const ReleaseManifest& manifest, const InstalledVersions& installed) {
     UpdatePlan plan;
     plan.doomnet = versions_differ(installed.doomnet, manifest.doomnet.version);
@@ -997,6 +1014,12 @@ UpdateCheckResult check_production_updates(const std::wstring& exe_path, const s
     }
     const UpdatePlan plan = updates_needed(manifest, installed);
     if (!plan.any()) {
+        if (host_file_is_newer_than_this_process(exe_path)) {
+            log_event(L"info", L"installer", (L"The production manifest matches, but '" + exe_path + L"' was written after this copy started, so Steam is still showing the old page.").c_str());
+            result.restart_steam = true;
+            result.message = L"The new version is already on this PC. Quit Steam and open it again to use it.";
+            return result;
+        }
         log_event(L"info", L"installer", L"The production manifest matches the installed versions. No payload was replaced.");
         result.message = L"This copy is already up to date.";
         return result;

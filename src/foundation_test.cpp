@@ -178,6 +178,26 @@ void test_update_gate() {
     check(!doomnet::updates_should_run(L"D:\\Documents\\Repos\\DoomNet-SteamPortal\\build\\Release\\DoomNet.exe", L"C:\\Users\\Tester\\AppData\\Local\\DoomNet", true), "updates ran from the DoomNet source tree");
     const doomnet::UpdateCheckResult blocked = doomnet::check_production_updates(L"D:\\Documents\\Repos\\DoomNet-SteamPortal\\build\\Release\\DoomNet.exe", L"C:\\Users\\Tester\\AppData\\Local\\DoomNet", true);
     check(!blocked.restart_steam && blocked.message.find(L"nothing was downloaded") != std::wstring::npos, "a source tree was offered an update download");
+    const std::wstring stale_exe = temp_dir() + L"\\newer-host.exe";
+    const char stale_byte[] = "x";
+    std::wstring stale_error;
+    check(doomnet::write_new_file(stale_exe, stale_byte, 1, stale_error), "write a newer host file");
+    HANDLE stale_file = CreateFileW(stale_exe.c_str(), FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    check(stale_file != INVALID_HANDLE_VALUE, "open the newer host file");
+    if (stale_file != INVALID_HANDLE_VALUE) {
+        FILETIME written{};
+        GetSystemTimeAsFileTime(&written);
+        ULARGE_INTEGER later{};
+        later.LowPart = written.dwLowDateTime;
+        later.HighPart = written.dwHighDateTime;
+        later.QuadPart += 60ULL * 60ULL * 10000000ULL;
+        written.dwLowDateTime = later.LowPart;
+        written.dwHighDateTime = later.HighPart;
+        check(SetFileTime(stale_file, nullptr, nullptr, &written) != 0, "set the newer host file time");
+        CloseHandle(stale_file);
+    }
+    check(doomnet::host_file_is_newer_than_this_process(stale_exe), "a host file written after startup was treated as the copy already running");
+    check(!doomnet::host_file_is_newer_than_this_process(L"C:\\Users\\Tester\\AppData\\Local\\DoomNet\\missing-host.exe"), "a missing host file was treated as a newer copy");
     check(doomnet::updates_should_run(L"C:\\Users\\Tester\\AppData\\Local\\DoomNet\\DoomNet.exe", L"C:\\Users\\Tester\\AppData\\Local\\DoomNet", true), "a tester install with updates on was blocked");
     doomnet::publish_update_notice(L"A new version is available. It's downloading now.");
     check(doomnet::current_update_notice() == L"A new version is available. It's downloading now.", "the page is not told that a new version is downloading");
@@ -1124,7 +1144,7 @@ void test_skin_page() {
     check(boot.find("stableSince") != std::string::npos, "boot script no longer waits for the library grid to finish its first pass");
     check(boot.find("wantsPlayer") != std::string::npos, "boot script no longer inserts the player on the Steam window");
     check(boot.find("win.__doomnetStore = window.__doomnetStore") != std::string::npos, "the Steam window does not receive the Store record, so an installed skin is shown as not installed");
-    check(boot.find("20261112-version-1.16.1-settings") != std::string::npos && boot.find("20261027-version-1.15.0") == std::string::npos, "Steam still loads the player as version 1.15.0");
+    check(boot.find("20261112-version-1.16.2-reload") != std::string::npos && boot.find("20261027-version-1.15.0") == std::string::npos, "Steam still loads the player as version 1.15.0");
     check(boot.find("win.__doomnetPartyConfig = window.__doomnetPartyConfig") != std::string::npos && boot.find("win.DoomNetStreamTunes = window.DoomNetStreamTunes") != std::string::npos, "the Steam window does not receive StreamTunes, so the listening-party button never appears");
     check(boot.find("doomnet-steamtunes-tab") != std::string::npos, "boot script does not add a SteamTunes tab");
     check(boot.find("row.appendChild(tab)") != std::string::npos, "the SteamTunes tab is not placed after the account name");
@@ -1225,7 +1245,7 @@ void test_skin_page() {
               patched_ui.find("Leave the current party before starting one") != std::string::npos &&
               patched_ui.find("startHost && UI.doomnetListenerParty()") != std::string::npos,
           "a listener session does not replace Now Playing or restore the local player on Leave Session");
-    check(patched_ui.find("var PLUGIN_VERSION = \"1.16.1\"") != std::string::npos && patched_ui.find("var PLUGIN_VERSION = \"1.15.0\"") == std::string::npos && patched_ui.find("Start Listening Party") != std::string::npos && patched_ui.find("tagCount") != std::string::npos, "the About version is still 1.16.0, or it does not include the listening party or the scan");
+    check(patched_ui.find("var PLUGIN_VERSION = \"1.16.2\"") != std::string::npos && patched_ui.find("var PLUGIN_VERSION = \"1.15.0\"") == std::string::npos && patched_ui.find("Start Listening Party") != std::string::npos && patched_ui.find("tagCount") != std::string::npos, "the About version is still 1.16.1, or it does not include the listening party or the scan");
     {
         const std::string stock_sync =
             "local function sync_assets_to_steamui()\n"
@@ -1238,7 +1258,7 @@ void test_skin_page() {
         const size_t closed = kept.find("end");
         check(stop_copy != std::string::npos && guarded != std::string::npos && returned != std::string::npos && closed != std::string::npos && copy_again != std::string::npos && stop_copy < guarded && guarded < returned && returned < closed && closed < copy_again, "the player still copies version 1.15.0 over the 1.16.0 page");
     }
-    check(doomnet::patched_player_bootstrap_text().find("var ASSET_REV = \"20261112-version-1.16.1-settings\"") != std::string::npos && doomnet::patched_player_bootstrap_text().find("20261027-version-1.15.0") == std::string::npos, "the player files are still cached as version 1.15.0");
+    check(doomnet::patched_player_bootstrap_text().find("var ASSET_REV = \"20261112-version-1.16.2-reload\"") != std::string::npos && doomnet::patched_player_bootstrap_text().find("20261027-version-1.15.0") == std::string::npos, "the player files are still cached as version 1.15.0");
     check(patched_ui.find("settingsTabList.push({ key: \"store\", label: \"Store\" })") != std::string::npos &&
               patched_ui.find("UI.doomnetRenderStore(view)") != std::string::npos &&
               patched_ui.find("doomnet_install_app") != std::string::npos &&

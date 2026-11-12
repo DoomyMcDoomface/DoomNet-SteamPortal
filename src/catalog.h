@@ -35,6 +35,9 @@ bool parse_release_manifest(const std::string& json, ReleaseManifest& out, std::
 // SteamSkin on GitHub does not install it.
 UpdatePlan updates_needed(const ReleaseManifest& manifest, const InstalledVersions& installed);
 
+// True when the file on disk was written after the running copy started.
+bool host_file_is_newer_than_this_process(const std::wstring& exe_path);
+
 std::string sha256_hex(const void* data, size_t size);
 bool sha256_file(const std::wstring& path, std::string& hex, std::wstring& error);
 
@@ -43,7 +46,7 @@ bool sha256_file(const std::wstring& path, std::string& hex, std::wstring& error
 bool payload_hash_matches(const std::wstring& path, const std::string& expected_sha256, std::wstring& error);
 
 struct UpdateCheckResult {
-    // True when a payload was downloaded. The running program stays the old one until Steam starts again.
+    // True when Steam has to start again before the new page can load.
     bool restart_steam = false;
     std::wstring message;
 };
