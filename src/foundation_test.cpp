@@ -1124,7 +1124,7 @@ void test_skin_page() {
     check(boot.find("stableSince") != std::string::npos, "boot script no longer waits for the library grid to finish its first pass");
     check(boot.find("wantsPlayer") != std::string::npos, "boot script no longer inserts the player on the Steam window");
     check(boot.find("win.__doomnetStore = window.__doomnetStore") != std::string::npos, "the Steam window does not receive the Store record, so an installed skin is shown as not installed");
-    check(boot.find("20261111-version-1.16.0-party-join") != std::string::npos && boot.find("20261027-version-1.15.0") == std::string::npos, "Steam still loads the player as version 1.15.0");
+    check(boot.find("20261112-version-1.16.0-art-embedded") != std::string::npos && boot.find("20261027-version-1.15.0") == std::string::npos, "Steam still loads the player as version 1.15.0");
     check(boot.find("win.__doomnetPartyConfig = window.__doomnetPartyConfig") != std::string::npos && boot.find("win.DoomNetStreamTunes = window.DoomNetStreamTunes") != std::string::npos, "the Steam window does not receive StreamTunes, so the listening-party button never appears");
     check(boot.find("doomnet-steamtunes-tab") != std::string::npos, "boot script does not add a SteamTunes tab");
     check(boot.find("row.appendChild(tab)") != std::string::npos, "the SteamTunes tab is not placed after the account name");
@@ -1238,7 +1238,7 @@ void test_skin_page() {
         const size_t closed = kept.find("end");
         check(stop_copy != std::string::npos && guarded != std::string::npos && returned != std::string::npos && closed != std::string::npos && copy_again != std::string::npos && stop_copy < guarded && guarded < returned && returned < closed && closed < copy_again, "the player still copies version 1.15.0 over the 1.16.0 page");
     }
-    check(doomnet::patched_player_bootstrap_text().find("var ASSET_REV = \"20261111-version-1.16.0-party-join\"") != std::string::npos && doomnet::patched_player_bootstrap_text().find("20261027-version-1.15.0") == std::string::npos, "the player files are still cached as version 1.15.0");
+    check(doomnet::patched_player_bootstrap_text().find("var ASSET_REV = \"20261112-version-1.16.0-art-embedded\"") != std::string::npos && doomnet::patched_player_bootstrap_text().find("20261027-version-1.15.0") == std::string::npos, "the player files are still cached as version 1.15.0");
     check(patched_ui.find("settingsTabList.push({ key: \"store\", label: \"Store\" })") != std::string::npos &&
               patched_ui.find("UI.doomnetRenderStore(view)") != std::string::npos &&
               patched_ui.find("doomnet_install_app") != std::string::npos &&
@@ -1263,6 +1263,8 @@ void test_skin_page() {
             const std::string patched = doomnet::patched_player_module("library", library_source);
             check(patched.find("entry.is_directory") != std::string::npos && patched.find("and every folder inside it") != std::string::npos && patched.find("not entry.is_symlink") != std::string::npos && patched.find("not entry.is_file") == std::string::npos,
                   "the scan still does not walk folders inside the music folder");
+            check(patched.find("return library.regenerate_artwork()") != std::string::npos && patched.find("$probe = Read-Bytes $audioPath 10") != std::string::npos,
+                  "Regenerate Artwork still clears the cache and reads more than the picture stored in each song");
         }
         std::string main_source;
         std::wstring main_error;
@@ -1282,6 +1284,10 @@ void test_skin_page() {
               doomnet::patched_player_css_text().find("color:var(--smp-accent)") != std::string::npos,
           "the listening-party controls are not aligned with Now Playing or the code does not use the accent");
     check(patched_ui.find("get_album_art_b64") != std::string::npos, "the player UI was not given the cover file fallback");
+    check(patched_ui.find("This reads the picture stored inside songs already in the library.") != std::string::npos &&
+              patched_ui.find("Clear every cached cover") == std::string::npos &&
+              patched_ui.find("Clearing...") == std::string::npos,
+          "Regenerate Artwork still asks to clear every cover before it reads pictures");
     check(patched_ui.find("url.indexOf(\"data:\") !== 0 && !artUrlMatchesAlbum(album, url)") != std::string::npos, "a cover already read as bytes is not painted on every tile");
     check(patched_ui.find("incomingRev <= (UI.pointerBusyRev || 0)") != std::string::npos && patched_ui.find("UI.pointerRevFloor") != std::string::npos, "a late page reply can still overwrite the page that was just opened");
     check(patched_ui.find("albumArtist: group.artist") != std::string::npos, "Album and Genre covers are not looked up by the album artist the way Artist covers are");

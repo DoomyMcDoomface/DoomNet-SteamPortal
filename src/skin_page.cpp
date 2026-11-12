@@ -493,10 +493,10 @@ std::string patched_player_bootstrap_text() {
         return {};
     }
     const std::string old_rev = "var ASSET_REV = \"20261027-version-1.15.0\"";
-    const std::string new_rev = "var ASSET_REV = \"20261111-version-1.16.0-party-join\"";
+    const std::string new_rev = "var ASSET_REV = \"20261112-version-1.16.0-art-embedded\"";
     const size_t at = text.find(old_rev);
     if (at == std::string::npos) {
-        if (text.find("20261111-version-1.16.0-party-join") == std::string::npos) {
+        if (text.find("20261112-version-1.16.0-art-embedded") == std::string::npos) {
             log_event(L"warn", L"inject", L"The player loader still uses version 1.15.0, so Steam can keep showing the old page.");
         }
     } else {
@@ -4128,6 +4128,40 @@ std::string patched_player_ui_text() {
         }
         ui.replace(store_at, store_hint.size(), store_button);
         store_at += store_button.size();
+    }
+    const std::string old_art_hint =
+        "\t\t\t\t\ttext: \"This clears every cached cover, including images you set in the player, then reads artwork from the music files again. It does not change those files. Playback is never blocked by artwork.\",\n";
+    const std::string new_art_hint =
+        "\t\t\t\t\ttext: \"This reads the picture stored inside songs already in the library. It does not scan the library again, and it does not read the rest of the song.\",\n";
+    const std::string old_art_click =
+        "\t\t\t\tif (!window.confirm(\"Clear every cached cover, including images you set in the player? Artwork is read from the music files again after you play a track. The music files themselves are not changed.\")) {\n"
+        "\t\t\t\t\treturn;\n"
+        "\t\t\t\t}\n"
+        "\t\t\t\tartBtn.disabled = true;\n"
+        "\t\t\t\tartBtn.textContent = \"Clearing...\";\n"
+        "\t\t\t\tartStatus.textContent = \"\";\n"
+        "\t\t\t\tApp.artIdleAllowed = false;\n"
+        "\t\t\t\tUI.artRegenWaitTries = 0;\n"
+        "\t\t\t\tUI.clearPaintedArt();\n"
+        "\t\t\t\tcallServer(\"queue_artwork_regenerate\")\n";
+    const std::string new_art_click =
+        "\t\t\t\tartBtn.disabled = true;\n"
+        "\t\t\t\tartBtn.textContent = \"Regenerating Artwork...\";\n"
+        "\t\t\t\tartStatus.textContent = \"Reading the pictures stored inside songs already in the library.\";\n"
+        "\t\t\t\tcallServer(\"queue_artwork_regenerate\")\n";
+    if (ui.find("Regenerate Artwork") != std::string::npos) {
+        if (ui.find(old_art_hint) == std::string::npos || ui.find(old_art_click) == std::string::npos) {
+            log_event(L"warn", L"inject", L"Regenerate Artwork still asks to clear every cover and waits for a song before it reads pictures.");
+        } else {
+            for (size_t art_hint_at = 0; (art_hint_at = ui.find(old_art_hint, art_hint_at)) != std::string::npos;) {
+                ui.replace(art_hint_at, old_art_hint.size(), new_art_hint);
+                art_hint_at += new_art_hint.size();
+            }
+            for (size_t art_click_at = 0; (art_click_at = ui.find(old_art_click, art_click_at)) != std::string::npos;) {
+                ui.replace(art_click_at, old_art_click.size(), new_art_click);
+                art_click_at += new_art_click.size();
+            }
+        }
     }
     return ui;
 }

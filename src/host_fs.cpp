@@ -1965,6 +1965,23 @@ std::string patched_player_module(const std::string& module, std::string source)
             source.replace(cache_at, old_cache.size(), new_cache);
         }
     }
+    const std::string old_queue =
+        "function library.queue_artwork_regenerate(steamUiDir)\n"
+        "\tlocal jobsDir = art_jobs_dir()\n";
+    const std::string new_queue =
+        "function library.queue_artwork_regenerate(steamUiDir)\n"
+        "\tif true then\n"
+        "\t\treturn library.regenerate_artwork()\n"
+        "\tend\n"
+        "\tlocal jobsDir = art_jobs_dir()\n";
+    const size_t queue_at = source.find(old_queue);
+    if (source.find("function library.queue_artwork_regenerate") != std::string::npos) {
+        if (queue_at == std::string::npos) {
+            log_event(L"warn", L"lua", L"Regenerate Artwork still clears the cache and waits for a song instead of reading pictures already in the library.");
+        } else {
+            source.replace(queue_at, old_queue.size(), new_queue);
+        }
+    }
     const std::string old_worker =
         "\tif ok and content and content ~= \"\" then\n"
         "\t\tpcall(utils.write_file, dest, content)\n"
@@ -1972,7 +1989,8 @@ std::string patched_player_module(const std::string& module, std::string source)
     const std::string new_worker =
         "\tif ok and content and content ~= \"\" then\n"
         "\t\tcontent = content:gsub(\"%$side = Find%-Sidecar %$audioPath %$roots\", \"if ($audioPath -match '(?i)\\\\.musiclibrary\\\\\\\\|\\\\\\\\DoomNet Art\\\\\\\\') { return $null }\\n\\t$side = Find-Sidecar $audioPath $roots\\n\\tif ($side -match '(?i)\\\\.musiclibrary\\\\\\\\|\\\\\\\\DoomNet Art\\\\\\\\') { $side = $null }\", 1)\n"
-        "\t\tcontent = content:gsub(\"%$head = Read%-Bytes %$audioPath 16777216\", \"$head = Read-Bytes $audioPath 15728640\\n\\tif ($head -and $head.Length -ge 10 -and [Text.Encoding]::ASCII.GetString($head, 0, 3) -eq 'ID3') {\\n\\t\\t$declared = 10 + (([int]$head[6] -band 0x7f) -shl 21) + (([int]$head[7] -band 0x7f) -shl 14) + (([int]$head[8] -band 0x7f) -shl 7) + ([int]$head[9] -band 0x7f)\\n\\t\\tif ($declared -gt $head.Length -and $declared -le 67108864) {\\n\\t\\t\\t$more = Read-Bytes $audioPath $declared\\n\\t\\t\\tif ($more -and $more.Length -gt $head.Length) { $head = $more }\\n\\t\\t}\\n\\t}\", 1)\n"
+        "\t\tcontent = content:gsub(\"%$head = Read%-Bytes %$audioPath 16777216\", \"$probe = Read-Bytes $audioPath 10\\n\\t$head = $probe\\n\\tif ($probe -and $probe.Length -ge 10 -and [Text.Encoding]::ASCII.GetString($probe, 0, 3) -eq 'ID3') {\\n\\t\\t$declared = 10 + (([int]$probe[6] -band 0x7f) -shl 21) + (([int]$probe[7] -band 0x7f) -shl 14) + (([int]$probe[8] -band 0x7f) -shl 7) + ([int]$probe[9] -band 0x7f)\\n\\t\\tif ($declared -gt 67108864) { $declared = 67108864 }\\n\\t\\tif ($declared -gt 10) { $head = Read-Bytes $audioPath $declared }\\n\\t} elseif ($probe -and $probe.Length -ge 4 -and [Text.Encoding]::ASCII.GetString($probe, 0, 4) -eq 'fLaC') {\\n\\t\\t$head = Read-Bytes $audioPath 8388608\\n\\t} else {\\n\\t\\t$head = Read-Bytes $audioPath 1048576\\n\\t}\", 1)\n"
+        "\t\tcontent = content:gsub(\"%$tail = Read%-Tail %$audioPath 8388608\", \"$tail = Read-Tail $audioPath 2097152\", 1)\n"
         "\t\tpcall(utils.write_file, dest, content)\n"
         "\tend\n";
     const size_t worker_at = source.find(old_worker);
