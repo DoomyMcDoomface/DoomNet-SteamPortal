@@ -493,10 +493,10 @@ std::string patched_player_bootstrap_text() {
         return {};
     }
     const std::string old_rev = "var ASSET_REV = \"20261027-version-1.15.0\"";
-    const std::string new_rev = "var ASSET_REV = \"20261112-version-1.16.0-art-live\"";
+    const std::string new_rev = "var ASSET_REV = \"20261112-version-1.16.1-settings\"";
     const size_t at = text.find(old_rev);
     if (at == std::string::npos) {
-        if (text.find("20261112-version-1.16.0-art-live") == std::string::npos) {
+        if (text.find("20261112-version-1.16.1-settings") == std::string::npos) {
             log_event(L"warn", L"inject", L"The player loader still uses version 1.15.0, so Steam can keep showing the old page.");
         }
     } else {
@@ -520,7 +520,7 @@ std::string patched_player_ui_text() {
     }
     ui.swap(normalized);
     const std::string old_plugin_version = "var PLUGIN_VERSION = \"1.15.0\"";
-    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.16.0\"";
+    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.16.1\"";
     for (size_t at = 0; (at = ui.find(old_plugin_version, at)) != std::string::npos; at += new_plugin_version.size()) {
         ui.replace(at, old_plugin_version.size(), new_plugin_version);
     }
@@ -4223,6 +4223,96 @@ std::string patched_player_ui_text() {
             }
         }
     }
+    const std::string old_restart_lead =
+        "\t\t\tsection.appendChild(\n"
+        "\t\t\t\tel(\"div\", \"smp-hint\", {\n"
+        "\t\t\t\t\ttext: \"If playback gets stuck loading, a rescan seems frozen, or the player just feels \"\n"
+        "\t\t\t\t\t\t+ \"wrong, use this instead of restarting Steam. It clears everything temporary - \"\n"
+        "\t\t\t\t\t\t+ \"in-progress loads, background scan progress, staged playback files, the game-audio \"\n"
+        "\t\t\t\t\t\t+ \"and Discord helpers - and reloads the player fresh. Your music library, playlists, \"\n"
+        "\t\t\t\t\t\t+ \"settings, and current queue are kept.\",\n"
+        "\t\t\t\t})\n"
+        "\t\t\t);\n"
+        "\n"
+        "\t\t\tvar restartBtn = el(\"button\", \"smp-btn smp-btn-danger\", { text: \"Restart App\" });\n";
+    const std::string new_restart_lead =
+        "\t\t\tvar restartBtn = el(\"button\", \"smp-btn smp-btn-danger\", { text: \"Restart App\" });\n";
+    const std::string old_restart_append = "\t\t\tsection.appendChild(restartBtn);\n";
+    const std::string new_restart_append =
+        "\t\t\tsection.appendChild(restartBtn);\n"
+        "\t\t\tsection.appendChild(\n"
+        "\t\t\t\tel(\"div\", \"smp-hint\", {\n"
+        "\t\t\t\t\ttext: \"If playback gets stuck loading, a rescan seems frozen, or the player just feels \"\n"
+        "\t\t\t\t\t\t+ \"wrong, use this instead of restarting Steam.\\n\"\n"
+        "\t\t\t\t\t\t+ \"It clears everything temporary - \"\n"
+        "\t\t\t\t\t\t+ \"in-progress loads, background scan progress, staged playback files, the game-audio \"\n"
+        "\t\t\t\t\t\t+ \"and Discord helpers - and reloads the player fresh. Your music library, playlists, \"\n"
+        "\t\t\t\t\t\t+ \"settings, and current queue are kept.\",\n"
+        "\t\t\t\t})\n"
+        "\t\t\t);\n";
+    const std::string old_redraw_lead =
+        "\t\t\tsection.appendChild(\n"
+        "\t\t\t\tel(\"div\", \"smp-hint\", {\n"
+        "\t\t\t\t\ttext: \"If covers stop showing after you browse around, this refreshes the current library \"\n"
+        "\t\t\t\t\t\t+ \"view and paints tiles that already have saved art. It does not rebuild the cover cache \"\n"
+        "\t\t\t\t\t\t+ \"or stop playback.\",\n"
+        "\t\t\t\t})\n"
+        "\t\t\t);\n"
+        "\t\t\tvar continueBtn = el(\"button\", \"smp-btn\", { text: \"Redraw Library View\" });\n";
+    const std::string new_redraw_lead =
+        "\t\t\tvar continueBtn = el(\"button\", \"smp-btn\", { text: \"Redraw Library View\" });\n";
+    const std::string old_redraw_append = "\t\t\tsection.appendChild(continueBtn);\n";
+    const std::string new_redraw_append =
+        "\t\t\tsection.appendChild(continueBtn);\n"
+        "\t\t\tsection.appendChild(\n"
+        "\t\t\t\tel(\"div\", \"smp-hint\", {\n"
+        "\t\t\t\t\ttext: \"If covers stop showing after you browse around, this refreshes the current library \"\n"
+        "\t\t\t\t\t\t+ \"view and paints tiles that already have saved art. It does not rebuild the cover cache \"\n"
+        "\t\t\t\t\t\t+ \"or stop playback.\",\n"
+        "\t\t\t\t})\n"
+        "\t\t\t);\n";
+    const std::string old_art_lead =
+        "\t\t\tsection.appendChild(\n"
+        "\t\t\t\tel(\"div\", \"smp-hint\", {\n"
+        "\t\t\t\t\ttext: \"This reads the picture stored inside songs already in the library. It does not scan the library again, and it does not read the rest of the song.\",\n"
+        "\t\t\t\t})\n"
+        "\t\t\t);\n";
+    const std::string old_art_append = "\t\t\tsection.appendChild(artBtn);\n\t\t\tsection.appendChild(artStatus);\n";
+    const std::string new_art_append =
+        "\t\t\tsection.appendChild(artBtn);\n"
+        "\t\t\tsection.appendChild(\n"
+        "\t\t\t\tel(\"div\", \"smp-hint\", {\n"
+        "\t\t\t\t\ttext: \"This reads the picture stored inside songs already in the library. It does not scan the library again, and it does not read the rest of the song.\",\n"
+        "\t\t\t\t})\n"
+        "\t\t\t);\n"
+        "\t\t\tsection.appendChild(artStatus);\n";
+    if (ui.find(old_restart_lead) == std::string::npos || ui.find(old_redraw_lead) == std::string::npos || ui.find(old_art_lead) == std::string::npos) {
+        log_event(L"warn", L"inject", L"Troubleshooting help still sits above the buttons.");
+    } else {
+        for (size_t restart_at = 0; (restart_at = ui.find(old_restart_lead, restart_at)) != std::string::npos;) {
+            ui.replace(restart_at, old_restart_lead.size(), new_restart_lead);
+            restart_at += new_restart_lead.size();
+        }
+        for (size_t restart_append_at = 0; (restart_append_at = ui.find(old_restart_append, restart_append_at)) != std::string::npos;) {
+            ui.replace(restart_append_at, old_restart_append.size(), new_restart_append);
+            restart_append_at += new_restart_append.size();
+        }
+        for (size_t redraw_at = 0; (redraw_at = ui.find(old_redraw_lead, redraw_at)) != std::string::npos;) {
+            ui.replace(redraw_at, old_redraw_lead.size(), new_redraw_lead);
+            redraw_at += new_redraw_lead.size();
+        }
+        for (size_t redraw_append_at = 0; (redraw_append_at = ui.find(old_redraw_append, redraw_append_at)) != std::string::npos;) {
+            ui.replace(redraw_append_at, old_redraw_append.size(), new_redraw_append);
+            redraw_append_at += new_redraw_append.size();
+        }
+        for (size_t art_lead_at = 0; (art_lead_at = ui.find(old_art_lead, art_lead_at)) != std::string::npos;) {
+            ui.replace(art_lead_at, old_art_lead.size(), "");
+        }
+        for (size_t art_append_at = 0; (art_append_at = ui.find(old_art_append, art_append_at)) != std::string::npos;) {
+            ui.replace(art_append_at, old_art_append.size(), new_art_append);
+            art_append_at += new_art_append.size();
+        }
+    }
     const std::string old_art_refresh =
         "\t\t\t\t\tif ((progress.written || 0) > 0 || (progress.done || 0) > 0) {\n"
         "\t\t\t\t\t\tUI.refreshMissingArt();\n"
@@ -4558,6 +4648,9 @@ std::string patched_player_css_text() {
         ".smp-eq-fader-input::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:8px;height:8px;margin-top:-3px;border:0;border-radius:50%;background:var(--smp-accent,#66c0f4);box-shadow:0 0 0 2px rgba(0,0,0,0.45);cursor:pointer;}\n"
         ".smp-eq-fader-label{margin-top:6px;color:var(--smp-text-dim);font-size:9px;font-weight:400;letter-spacing:0.02em;}\n"
         ".smp-settings-slider{flex:0 1 240px;width:240px;max-width:240px;accent-color:var(--smp-accent);}\n"
+        "#doomnet-steamtunes-host .smp-view-settings{padding-left:16px;box-sizing:border-box;}\n"
+        "#doomnet-steamtunes-host .smp-view-settings .smp-settings-section>.smp-btn{margin-top:28px;}\n"
+        "#doomnet-steamtunes-host .smp-view-settings .smp-settings-section>.smp-hint{white-space:pre-line;}\n"
         ".smp-settings-readout{width:36ch;min-width:36ch;max-width:36ch;flex:0 0 36ch;overflow:hidden;white-space:nowrap;text-align:left;}\n"
         ".smp-folder-path{flex:0 1 auto;min-width:0;}\n"
         "#doomnet-steamtunes-host .doomnet-update-notice{position:absolute;left:16px;right:16px;top:12px;z-index:40;padding:10px 14px;background:#1b2838;border:1px solid var(--smp-accent,#66c0f4);color:#fff;font-size:14px;line-height:1.4;}\n"

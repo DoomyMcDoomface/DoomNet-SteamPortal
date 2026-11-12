@@ -1,0 +1,18 @@
+---
+description: Bump the About version with every change testers can see
+alwaysApply: true
+---
+
+# Version numbers
+
+The About line is `PLUGIN_VERSION` in `src/skin_page.cpp`. It replaces the player's `1.15.0`. Use `MAJOR.MINOR.PATCH`.
+
+- **Patch** (`1.16.1`): a fix, layout change, or wording change. The player still works the same way.
+- **Minor** (`1.17.0`): a new thing a tester can do. Saved libraries and settings still load. Reset patch to 0.
+- **Major** (`2.0.0`): saved libraries, settings, or the way an existing install works would break. Reset minor and patch to 0.
+
+Bump that number in the same change as the code. A rule, note, or comment by itself does not bump it.
+
+When the page script or stylesheet changes, change the cache token in the same edit in `src/boot_script.js`, `src/skin_page.cpp`, and `src/foundation_test.cpp`. Put the new version in the token, for example `20261112-version-1.16.1-settings`. Update the foundation check that looks for the exact `PLUGIN_VERSION` string.
+
+Example: moving Settings text is a patch, so `1.16.0` becomes `1.16.1`. A new library button is a minor, so `1.16.1` becomes `1.17.0`.

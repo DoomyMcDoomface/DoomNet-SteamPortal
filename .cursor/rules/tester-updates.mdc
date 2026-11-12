@@ -1,0 +1,14 @@
+---
+description: Commit and publish every tester-facing change
+alwaysApply: true
+---
+
+# Tester updates
+
+After a change to the player, commit it and push `main` and `production` before the turn ends. Testers get that build from Check for Updates. Do not leave the fix only on this computer.
+
+- Commit the player change and its version bump together.
+- Push `HEAD` to `refs/heads/main` and `refs/heads/production`. The pre-push hook refreshes the tester zip. If that upload fails, do not push. Do not skip the hook.
+- Leave out installer zips, build leftovers, local notes, and the audio helper unless the change is specifically about those files.
+
+A rule or note by itself does not need a commit. A code change does.
