@@ -49,6 +49,105 @@ bool is_player_inject(const std::string& name) {
     return name == "music-player-inject.js" || (name.size() > 22 && name.find("music-player-inject.js") != std::string::npos);
 }
 
+int hex_value(char ch) {
+    if (ch >= '0' && ch <= '9') {
+        return ch - '0';
+    }
+    if (ch >= 'a' && ch <= 'f') {
+        return ch - 'a' + 10;
+    }
+    if (ch >= 'A' && ch <= 'F') {
+        return ch - 'A' + 10;
+    }
+    return -1;
+}
+
+bool parse_hex_color(const std::string& text, int& red, int& green, int& blue) {
+    if (text.size() != 7 || text[0] != '#') {
+        return false;
+    }
+    int digits[6] = {};
+    for (int i = 0; i < 6; ++i) {
+        digits[i] = hex_value(text[static_cast<size_t>(i + 1)]);
+        if (digits[i] < 0) {
+            return false;
+        }
+    }
+    red = digits[0] * 16 + digits[1];
+    green = digits[2] * 16 + digits[3];
+    blue = digits[4] * 16 + digits[5];
+    return true;
+}
+
+std::string format_hex_color(int red, int green, int blue) {
+    auto clamp = [](int value) {
+        if (value < 0) {
+            return 0;
+        }
+        if (value > 255) {
+            return 255;
+        }
+        return value;
+    };
+    char buffer[8] = {};
+    sprintf_s(buffer, "#%02x%02x%02x", clamp(red), clamp(green), clamp(blue));
+    return buffer;
+}
+
+int scale_channel(int value, double scale) {
+    const double scaled = static_cast<double>(value) * scale;
+    return static_cast<int>(scaled + 0.5);
+}
+
+std::string darken_hex(const std::string& hex, double amount) {
+    int red = 0;
+    int green = 0;
+    int blue = 0;
+    if (!parse_hex_color(hex, red, green, blue)) {
+        return "#7a1f1f";
+    }
+    if (amount < 0) {
+        amount = 0;
+    }
+    if (amount > 1) {
+        amount = 1;
+    }
+    const double scale = 1.0 - amount;
+    return format_hex_color(scale_channel(red, scale), scale_channel(green, scale), scale_channel(blue, scale));
+}
+
+std::string lighten_hex(const std::string& hex, double amount) {
+    int red = 0;
+    int green = 0;
+    int blue = 0;
+    if (!parse_hex_color(hex, red, green, blue)) {
+        return hex;
+    }
+    if (amount < 0) {
+        amount = 0;
+    }
+    if (amount > 1) {
+        amount = 1;
+    }
+    auto lift = [&](int value) { return scale_channel(255 - value, amount) + value; };
+    return format_hex_color(lift(red), lift(green), lift(blue));
+}
+
+void replace_hex_color(std::string& css, const char* from, const std::string& to) {
+    const size_t width = 7;
+    for (size_t i = 0; i + width <= css.size();) {
+        if (css[i] == '#' && _strnicmp(css.c_str() + i, from, width) == 0) {
+            const bool longer = i + width < css.size() && hex_value(css[i + width]) >= 0;
+            if (!longer) {
+                css.replace(i, width, to);
+                i += to.size();
+                continue;
+            }
+        }
+        ++i;
+    }
+}
+
 struct SkinTag {
     std::string match;
     std::string css_url;
@@ -110,6 +209,81 @@ size_t find_ci(const std::string& text, const char* needle) {
         }
     }
     return std::string::npos;
+}
+
+}  // namespace
+
+bool skin_accent_for_theme(const std::string& theme, const std::string& custom, std::string& accent, std::string& accent_dark) {
+    if (theme == "steam") {
+        accent = "#66c0f4";
+        accent_dark = "#417a9b";
+        return true;
+    }
+    if (theme == "red") {
+        accent = "#b33232";
+        accent_dark = "#7a1f1f";
+        return true;
+    }
+    if (theme == "blue") {
+        accent = "#3d8bfd";
+        accent_dark = "#2156b8";
+        return true;
+    }
+    if (theme == "green") {
+        accent = "#3d9b4a";
+        accent_dark = "#24662e";
+        return true;
+    }
+    if (theme == "custom") {
+        int red = 0;
+        int green = 0;
+        int blue = 0;
+        std::string hex = custom;
+        for (char& ch : hex) {
+            if (ch >= 'A' && ch <= 'Z') {
+                ch = static_cast<char>(ch - 'A' + 'a');
+            }
+        }
+        if (!parse_hex_color(hex, red, green, blue)) {
+            hex = "#b33232";
+        }
+        accent = hex;
+        accent_dark = darken_hex(hex, 0.35);
+        return true;
+    }
+    return false;
+}
+
+std::string recolor_skin_css(std::string css, const std::string& accent, const std::string& accent_dark) {
+    const std::string light = lighten_hex(accent, 0.25);
+    const std::string lighter = lighten_hex(accent, 0.45);
+    replace_hex_color(css, "#c93939", accent);
+    replace_hex_color(css, "#a82f2f", accent);
+    replace_hex_color(css, "#d84a4a", light);
+    replace_hex_color(css, "#e07070", lighter);
+    replace_hex_color(css, "#8b2929", accent_dark);
+    replace_hex_color(css, "#8a2828", accent_dark);
+    return css;
+}
+
+namespace {
+
+bool player_skin_accent(std::string& accent, std::string& accent_dark) {
+    std::wstring root;
+    std::wstring error;
+    if (!data_root(root, error) || root.empty()) {
+        return false;
+    }
+    std::string json;
+    if (!read_entire_file(root + L"\\player\\backend\\data\\settings.json", json, error)) {
+        return false;
+    }
+    Json parsed;
+    std::string parse_error;
+    if (!json_parse(json, parsed, parse_error) || parsed.type != Json::Type::Object) {
+        return false;
+    }
+    return skin_accent_for_theme(parsed.key_string("uiColorTheme"), parsed.key_string("uiCustomColor"), accent, accent_dark);
 }
 
 }  // namespace
@@ -290,6 +464,12 @@ SkinPreamble load_skin_preamble(const std::wstring& skin_json, bool player) {
     std::string javascript = std::string("window.__doomnetConfig={\"player\":") + (player ? "true" : "false") + ",\"skin\":true,\"patches\":[";
     bool first = true;
     int skipped_player = 0;
+    std::string skin_accent;
+    std::string skin_accent_dark;
+    const bool recolor_skin = player_skin_accent(skin_accent, skin_accent_dark);
+    if (recolor_skin) {
+        log_event(L"info", L"inject", (L"SteamSkin accent colors now use '" + utf8_to_wide_lossy(skin_accent) + L"' from the music player's saved color.").c_str());
+    }
     for (const Json& patch : patches->a) {
         if (patch.type != Json::Type::Object) {
             continue;
@@ -322,6 +502,9 @@ SkinPreamble load_skin_preamble(const std::wstring& skin_json, bool player) {
         if (!css.empty()) {
             tag.css_url = base + css;
             tag.css_body = read_skin_text(skin_folder, css);
+            if (recolor_skin) {
+                tag.css_body = recolor_skin_css(std::move(tag.css_body), skin_accent, skin_accent_dark);
+            }
         }
         if (!js.empty()) {
             tag.js_url = base + js;
@@ -493,10 +676,10 @@ std::string patched_player_bootstrap_text() {
         return {};
     }
     const std::string old_rev = "var ASSET_REV = \"20261027-version-1.15.0\"";
-    const std::string new_rev = "var ASSET_REV = \"20261112-version-1.16.5-restart-row\"";
+    const std::string new_rev = "var ASSET_REV = \"20261112-version-1.17.0-skin-color\"";
     const size_t at = text.find(old_rev);
     if (at == std::string::npos) {
-        if (text.find("20261112-version-1.16.5-restart-row") == std::string::npos) {
+        if (text.find("20261112-version-1.17.0-skin-color") == std::string::npos) {
             log_event(L"warn", L"inject", L"The player loader still uses version 1.15.0, so Steam can keep showing the old page.");
         }
     } else {
@@ -520,7 +703,7 @@ std::string patched_player_ui_text() {
     }
     ui.swap(normalized);
     const std::string old_plugin_version = "var PLUGIN_VERSION = \"1.15.0\"";
-    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.16.5\"";
+    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.17.0\"";
     for (size_t at = 0; (at = ui.find(old_plugin_version, at)) != std::string::npos; at += new_plugin_version.size()) {
         ui.replace(at, old_plugin_version.size(), new_plugin_version);
     }
@@ -3506,7 +3689,7 @@ std::string patched_player_ui_text() {
 			}];
 			var page = el("div", "doomnet-store");
 			page.appendChild(el("div", "doomnet-store-title", { text: "Store" }));
-			page.appendChild(el("div", "doomnet-store-hint", { text: "Apps install beside the player. The player's saved color stays as it is." }));
+			page.appendChild(el("div", "doomnet-store-hint", { text: "Apps install beside the player. Configure matches SteamSkin to the music player's color." }));
 			var update = el("button", "smp-btn doomnet-store-update", { type: "button", text: "Check for Updates" });
 			update.addEventListener("click", function () {
 				if (update.disabled) {
@@ -3765,6 +3948,106 @@ std::string patched_player_ui_text() {
         ui.insert(party_feature_at, party_methods);
     } else {
         log_event(L"warn", L"stream", L"The player UI did not contain the settings feature block, so StreamTunes controls were not added.");
+    }
+    const std::string old_store_install = "\t\t\t\t\trow.appendChild(button);\n";
+    const std::string new_store_install =
+        "\t\t\t\t\tvar actions = el(\"div\", \"doomnet-store-actions\");\n"
+        "\t\t\t\t\tactions.appendChild(button);\n"
+        "\t\t\t\t\tvar configure = el(\"button\", \"smp-btn doomnet-store-configure\", { type: \"button\", text: \"Configure\" });\n"
+        "\t\t\t\t\tconfigure.addEventListener(\"click\", function () {\n"
+        "\t\t\t\t\t\tvar open = page.querySelector(\".doomnet-skin-appearance\");\n"
+        "\t\t\t\t\t\tif (open) {\n"
+        "\t\t\t\t\t\t\topen.remove();\n"
+        "\t\t\t\t\t\t\treturn;\n"
+        "\t\t\t\t\t\t}\n"
+        "\t\t\t\t\t\tvar panel = el(\"div\", \"doomnet-skin-appearance\");\n"
+        "\t\t\t\t\t\tpanel.appendChild(el(\"div\", \"doomnet-store-name\", { text: \"Appearance\" }));\n"
+        "\t\t\t\t\t\tvar choices = el(\"div\", \"smp-color-swatches\");\n"
+        "\t\t\t\t\t\tvar current = (App.settings && App.settings.uiColorTheme) || \"steam\";\n"
+        "\t\t\t\t\t\tvar options = [\n"
+        "\t\t\t\t\t\t\t{ value: \"steam\", label: \"Steam Blue\", color: \"#66c0f4\" },\n"
+        "\t\t\t\t\t\t\t{ value: \"red\", label: \"Red\", color: \"#b33232\" },\n"
+        "\t\t\t\t\t\t\t{ value: \"blue\", label: \"Blue\", color: \"#3d8bfd\" },\n"
+        "\t\t\t\t\t\t\t{ value: \"green\", label: \"Green\", color: \"#3d9b4a\" },\n"
+        "\t\t\t\t\t\t\t{ value: \"custom\", label: \"Custom\", color: (App.settings && App.settings.uiCustomColor) || \"#b33232\" },\n"
+        "\t\t\t\t\t\t];\n"
+        "\t\t\t\t\t\tfunction applyTheme(theme, hex) {\n"
+        "\t\t\t\t\t\t\tif (!App.settings) {\n"
+        "\t\t\t\t\t\t\t\tApp.settings = {};\n"
+        "\t\t\t\t\t\t\t}\n"
+        "\t\t\t\t\t\t\tApp.settings.uiColorTheme = theme;\n"
+        "\t\t\t\t\t\t\tif (theme === \"custom\" && hex) {\n"
+        "\t\t\t\t\t\t\t\tApp.settings.uiCustomColor = hex;\n"
+        "\t\t\t\t\t\t\t}\n"
+        "\t\t\t\t\t\t\tUI.commitSetting(\"uiColorTheme\", theme, false);\n"
+        "\t\t\t\t\t\t\tif (theme === \"custom\" && hex) {\n"
+        "\t\t\t\t\t\t\t\tUI.commitSetting(\"uiCustomColor\", hex, false);\n"
+        "\t\t\t\t\t\t\t}\n"
+        "\t\t\t\t\t\t\tif (UI.applyAppearanceSettings) {\n"
+        "\t\t\t\t\t\t\t\tUI.applyAppearanceSettings();\n"
+        "\t\t\t\t\t\t\t}\n"
+        "\t\t\t\t\t\t\tUI.showToast(\"The music player is using this color. Open Steam again so SteamSkin matches.\", 8000);\n"
+        "\t\t\t\t\t\t}\n"
+        "\t\t\t\t\t\toptions.forEach(function (option) {\n"
+        "\t\t\t\t\t\t\tvar swatch = el(\"button\", \"smp-color-swatch\" + (current === option.value ? \" active\" : \"\"), {\n"
+        "\t\t\t\t\t\t\t\ttype: \"button\",\n"
+        "\t\t\t\t\t\t\t\ttitle: option.label,\n"
+        "\t\t\t\t\t\t\t});\n"
+        "\t\t\t\t\t\t\tswatch.setAttribute(\"aria-label\", option.label);\n"
+        "\t\t\t\t\t\t\tswatch.style.setProperty(\"--smp-swatch\", option.color);\n"
+        "\t\t\t\t\t\t\tif (option.value === \"steam\") {\n"
+        "\t\t\t\t\t\t\t\tswatch.classList.add(\"smp-color-swatch-steam\");\n"
+        "\t\t\t\t\t\t\t}\n"
+        "\t\t\t\t\t\t\tif (option.value === \"custom\") {\n"
+        "\t\t\t\t\t\t\t\tswatch.classList.add(\"smp-color-swatch-custom\");\n"
+        "\t\t\t\t\t\t\t}\n"
+        "\t\t\t\t\t\t\tswatch.appendChild(el(\"span\", \"smp-color-swatch-label\", { text: option.label }));\n"
+        "\t\t\t\t\t\t\tswatch.addEventListener(\"click\", function () {\n"
+        "\t\t\t\t\t\t\t\tvar customHex = (App.settings && App.settings.uiCustomColor) || \"#b33232\";\n"
+        "\t\t\t\t\t\t\t\tapplyTheme(option.value, option.value === \"custom\" ? customHex : \"\");\n"
+        "\t\t\t\t\t\t\t\tvar nodes = choices.querySelectorAll(\".smp-color-swatch\");\n"
+        "\t\t\t\t\t\t\t\tfor (var i = 0; i < nodes.length; i++) {\n"
+        "\t\t\t\t\t\t\t\t\tif (nodes[i] === swatch) {\n"
+        "\t\t\t\t\t\t\t\t\t\tnodes[i].classList.add(\"active\");\n"
+        "\t\t\t\t\t\t\t\t\t} else {\n"
+        "\t\t\t\t\t\t\t\t\t\tnodes[i].classList.remove(\"active\");\n"
+        "\t\t\t\t\t\t\t\t\t}\n"
+        "\t\t\t\t\t\t\t\t}\n"
+        "\t\t\t\t\t\t\t\tvar customRow = panel.querySelector(\".doomnet-skin-custom\");\n"
+        "\t\t\t\t\t\t\t\tif (customRow) {\n"
+        "\t\t\t\t\t\t\t\t\tcustomRow.hidden = option.value !== \"custom\";\n"
+        "\t\t\t\t\t\t\t\t}\n"
+        "\t\t\t\t\t\t\t});\n"
+        "\t\t\t\t\t\t\tchoices.appendChild(swatch);\n"
+        "\t\t\t\t\t\t});\n"
+        "\t\t\t\t\t\tpanel.appendChild(choices);\n"
+        "\t\t\t\t\t\tvar customRow = el(\"div\", \"doomnet-skin-custom\");\n"
+        "\t\t\t\t\t\tcustomRow.hidden = current !== \"custom\";\n"
+        "\t\t\t\t\t\tvar picker = el(\"input\", \"smp-color-picker\", { type: \"color\" });\n"
+        "\t\t\t\t\t\tvar hex = String((App.settings && App.settings.uiCustomColor) || \"#b33232\").toLowerCase();\n"
+        "\t\t\t\t\t\tif (!/^#[0-9a-f]{6}$/.test(hex)) {\n"
+        "\t\t\t\t\t\t\thex = \"#b33232\";\n"
+        "\t\t\t\t\t\t}\n"
+        "\t\t\t\t\t\tpicker.value = hex;\n"
+        "\t\t\t\t\t\tpicker.addEventListener(\"change\", function () {\n"
+        "\t\t\t\t\t\t\tapplyTheme(\"custom\", picker.value);\n"
+        "\t\t\t\t\t\t});\n"
+        "\t\t\t\t\t\tcustomRow.appendChild(picker);\n"
+        "\t\t\t\t\t\tpanel.appendChild(customRow);\n"
+        "\t\t\t\t\t\tpanel.appendChild(el(\"div\", \"smp-hint\", {\n"
+        "\t\t\t\t\t\t\ttext: \"These are the same colors as the music player. The player changes now. SteamSkin changes the next time Steam opens.\",\n"
+        "\t\t\t\t\t\t}));\n"
+        "\t\t\t\t\t\tpage.insertBefore(panel, row.nextSibling);\n"
+        "\t\t\t\t\t});\n"
+        "\t\t\t\t\tactions.appendChild(configure);\n"
+        "\t\t\t\t\trow.appendChild(actions);\n";
+    if (ui.find(old_store_install) == std::string::npos) {
+        log_event(L"warn", L"inject", L"The Store did not show an Install button, so Configure was not added beside it.");
+    } else {
+        for (size_t store_button_at = 0; (store_button_at = ui.find(old_store_install, store_button_at)) != std::string::npos;) {
+            ui.replace(store_button_at, old_store_install.size(), new_store_install);
+            store_button_at += new_store_install.size();
+        }
     }
 
     const std::string old_feature =
@@ -4678,6 +4961,10 @@ std::string patched_player_css_text() {
         "#doomnet-steamtunes-host .doomnet-store-namecol{min-width:0;flex:1 1 auto;}\n"
         "#doomnet-steamtunes-host .doomnet-store-name{color:var(--smp-text);font-size:16px;}\n"
         "#doomnet-steamtunes-host .doomnet-store-version{margin-top:2px;color:var(--smp-text-dim);font-size:12px;}\n"
+        "#doomnet-steamtunes-host .doomnet-store-actions{display:flex;align-items:center;gap:8px;flex:0 0 auto;}\n"
+        "#doomnet-steamtunes-host .doomnet-skin-appearance{padding:4px 0 16px;}\n"
+        "#doomnet-steamtunes-host .doomnet-skin-custom{margin-top:10px;}\n"
+        "#doomnet-steamtunes-host .doomnet-skin-custom[hidden]{display:none;}\n"
         "#doomnet-steamtunes-host .doomnet-store-install:disabled{opacity:0.4;cursor:default;}\n"
         "#doomnet-steamtunes-host .doomnet-store-update{margin:0 0 16px;}\n"
         "#doomnet-steamtunes-host .doomnet-store-update:disabled{opacity:0.4;cursor:default;}\n"

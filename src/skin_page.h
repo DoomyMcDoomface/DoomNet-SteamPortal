@@ -24,6 +24,14 @@ struct SkinPreamble {
     std::wstring detail;
 };
 
+// The music player's named colors. Custom uses `custom` when it is #rrggbb.
+// The dark color is the player's accentDark, or the custom color darkened the same way.
+bool skin_accent_for_theme(const std::string& theme, const std::string& custom, std::string& accent, std::string& accent_dark);
+
+// Replaces SteamSkin's red accent colors with `accent` and `accent_dark`.
+// Grey, blue, and white values in the same file stay as they are.
+std::string recolor_skin_css(std::string css, const std::string& accent, const std::string& accent_dark);
+
 // Reads skin.json Patches and builds the window.__doomnetConfig statement.
 // Skips every TargetJs of music-player-inject.js. Does not add Millennium's
 // default patches when UseDefaultPatches is true. `player` inserts the player

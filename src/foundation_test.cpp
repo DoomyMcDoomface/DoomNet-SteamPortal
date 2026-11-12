@@ -1111,6 +1111,13 @@ void test_skin_page() {
     check(loaded.javascript.find("friends.custom") == std::string::npos, "UseDefaultPatches added a friends stylesheet");
     check(loaded.javascript.find("https://steamloopback.host/doomnet-skin/libraryroot.custom.css") != std::string::npos, "library stylesheet URL is missing");
     check(loaded.javascript.find("\"player\":false") != std::string::npos, "skin-only preamble turned the player on");
+    std::string accent;
+    std::string accent_dark;
+    check(doomnet::skin_accent_for_theme("green", "", accent, accent_dark) && accent == "#3d9b4a" && accent_dark == "#24662e", "green did not use the music player's green");
+    check(doomnet::skin_accent_for_theme("custom", "#112233", accent, accent_dark) && accent == "#112233" && accent_dark == "#0b1621", "a custom color was not darkened");
+    const std::string recolored = doomnet::recolor_skin_css("a #c93939 b #8b2929 c #8b929a d #E07070", "#3d9b4a", "#24662e");
+    check(recolored.find("#c93939") == std::string::npos && recolored.find("#8b2929") == std::string::npos && recolored.find("#e07070") == std::string::npos && recolored.find("#E07070") == std::string::npos && recolored.find("#3d9b4a") != std::string::npos && recolored.find("#24662e") != std::string::npos && recolored.find("#8b929a") != std::string::npos, "SteamSkin red was left in place or a grey color was changed");
+    check(!doomnet::skin_accent_for_theme("purple", "", accent, accent_dark), "an unknown color was accepted");
     check(doomnet::skin_tags_ready(), "skin tags were not kept for store documents");
     const std::string store_tags = doomnet::skin_tags_for_document("https://store.steampowered.com/");
     check(store_tags.find("steam-store-chrome-bg") != std::string::npos, "the store document did not inline the store chrome colors");
@@ -1155,7 +1162,7 @@ void test_skin_page() {
     check(boot.find("stableSince") != std::string::npos, "boot script no longer waits for the library grid to finish its first pass");
     check(boot.find("wantsPlayer") != std::string::npos, "boot script no longer inserts the player on the Steam window");
     check(boot.find("win.__doomnetStore = window.__doomnetStore") != std::string::npos, "the Steam window does not receive the Store record, so an installed skin is shown as not installed");
-    check(boot.find("20261112-version-1.16.5-restart-row") != std::string::npos && boot.find("20261027-version-1.15.0") == std::string::npos, "Steam still loads the player as version 1.15.0");
+    check(boot.find("20261112-version-1.17.0-skin-color") != std::string::npos && boot.find("20261027-version-1.15.0") == std::string::npos, "Steam still loads the player as version 1.15.0");
     check(boot.find("win.__doomnetPartyConfig = window.__doomnetPartyConfig") != std::string::npos && boot.find("win.DoomNetStreamTunes = window.DoomNetStreamTunes") != std::string::npos, "the Steam window does not receive StreamTunes, so the listening-party button never appears");
     check(boot.find("doomnet-steamtunes-tab") != std::string::npos, "boot script does not add a SteamTunes tab");
     check(boot.find("row.appendChild(tab)") != std::string::npos, "the SteamTunes tab is not placed after the account name");
@@ -1256,7 +1263,7 @@ void test_skin_page() {
               patched_ui.find("Leave the current party before starting one") != std::string::npos &&
               patched_ui.find("startHost && UI.doomnetListenerParty()") != std::string::npos,
           "a listener session does not replace Now Playing or restore the local player on Leave Session");
-    check(patched_ui.find("var PLUGIN_VERSION = \"1.16.5\"") != std::string::npos && patched_ui.find("var PLUGIN_VERSION = \"1.15.0\"") == std::string::npos && patched_ui.find("Start Listening Party") != std::string::npos && patched_ui.find("tagCount") != std::string::npos, "the About version is still 1.16.4, or it does not include the listening party or the scan");
+    check(patched_ui.find("var PLUGIN_VERSION = \"1.17.0\"") != std::string::npos && patched_ui.find("var PLUGIN_VERSION = \"1.15.0\"") == std::string::npos && patched_ui.find("Start Listening Party") != std::string::npos && patched_ui.find("tagCount") != std::string::npos, "the About version is still 1.16.5, or it does not include the listening party or the scan");
     {
         const std::string stock_sync =
             "local function sync_assets_to_steamui()\n"
@@ -1269,14 +1276,18 @@ void test_skin_page() {
         const size_t closed = kept.find("end");
         check(stop_copy != std::string::npos && guarded != std::string::npos && returned != std::string::npos && closed != std::string::npos && copy_again != std::string::npos && stop_copy < guarded && guarded < returned && returned < closed && closed < copy_again, "the player still copies version 1.15.0 over the 1.16.0 page");
     }
-    check(doomnet::patched_player_bootstrap_text().find("var ASSET_REV = \"20261112-version-1.16.5-restart-row\"") != std::string::npos && doomnet::patched_player_bootstrap_text().find("20261027-version-1.15.0") == std::string::npos, "the player files are still cached as version 1.15.0");
+    check(doomnet::patched_player_bootstrap_text().find("var ASSET_REV = \"20261112-version-1.17.0-skin-color\"") != std::string::npos && doomnet::patched_player_bootstrap_text().find("20261027-version-1.15.0") == std::string::npos, "the player files are still cached as version 1.15.0");
     check(patched_ui.find("settingsTabList.push({ key: \"store\", label: \"Store\" })") != std::string::npos &&
               patched_ui.find("UI.doomnetRenderStore(view)") != std::string::npos &&
               patched_ui.find("doomnet_install_app") != std::string::npos &&
               patched_ui.find("app.id === \"steamskin\"") != std::string::npos &&
               patched_ui.find("button.disabled = true") != std::string::npos &&
               patched_ui.find("SteamSkin is already installed") != std::string::npos &&
-              patched_ui.find("The player's saved color stays as it is.") != std::string::npos &&
+              patched_ui.find("Configure matches SteamSkin to the music player's color.") != std::string::npos &&
+              patched_ui.find("doomnet-store-configure") != std::string::npos &&
+              patched_ui.find("text: \"Configure\"") != std::string::npos &&
+              patched_ui.find("doomnet-skin-appearance") != std::string::npos &&
+              patched_ui.find("Open Steam again so SteamSkin matches.") != std::string::npos &&
               patched_ui.find("Check for Updates") != std::string::npos &&
               patched_ui.find("doomnet_check_updates") != std::string::npos &&
               patched_ui.find("doomnet_update_notice") != std::string::npos &&
