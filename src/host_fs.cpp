@@ -1341,6 +1341,7 @@ std::string patched_player_module(const std::string& module, std::string source)
             "\t\tlastPath = result.lastPath, -- TEMPORARY: crash-diagnosis aid\n";
         const std::string new_batch_json =
             "\t\tplaylistsUpdated = result.playlistsUpdated or 0,\n"
+            "\t\tnewOnly = result.newOnly == true,\n"
             "\t\tfolder = result.folder or \"\",\n"
             "\t\tdirsDone = result.dirsDone or 0,\n"
             "\t\tlastPath = result.lastPath, -- TEMPORARY: crash-diagnosis aid\n";
@@ -1765,6 +1766,91 @@ std::string patched_player_module(const std::string& module, std::string source)
         "\t\treturn false\n"
         "\tend\n"
         "\tif fs.exists(scan_done_path()) then\n";
+    const std::string old_new_only_finish =
+        "\t\tlistJob.active = false\n"
+        "\t\tresult = listing_status()\n"
+        "\t\tresult.listing = false\n"
+        "\t\tresult.totalFiles = #unique\n"
+        "\telse\n";
+    const std::string new_new_only_finish =
+        "\t\tlocal updated = sync_discovered_playlists()\n"
+        "\t\tscanState.totalFiles = #unique\n"
+        "\t\tlistJob.active = false\n"
+        "\t\tresult = listing_status()\n"
+        "\t\tresult.listing = false\n"
+        "\t\tresult.totalFiles = #unique\n"
+        "\t\tresult.playlistsUpdated = updated\n"
+        "\t\tresult.totalTracks = count_tracks()\n"
+        "\telse\n";
+    if (source.find("if listJob.newOnly then") != std::string::npos) {
+        const size_t new_only_at = source.find(old_new_only_finish);
+        if (new_only_at == std::string::npos) {
+            log_event(L"warn", L"lua", L"Scan For New Tracks still finishes without importing playlist files.");
+        } else {
+            source.replace(new_only_at, old_new_only_finish.size(), new_new_only_finish);
+        }
+    }
+    const std::string old_batch_poll =
+        "\tif listJob.active then\n"
+        "\t\tlocal stillListing = poll_list_job()\n"
+        "\t\tlisting = stillListing == true\n"
+        "\tend\n";
+    const std::string new_batch_poll =
+        "\tlocal listed = nil\n"
+        "\tif listJob.active then\n"
+        "\t\tlocal stillListing, listedResult = poll_list_job()\n"
+        "\t\tlisting = stillListing == true\n"
+        "\t\tlisted = listedResult\n"
+        "\tend\n";
+    if (source.find("function library.scan_batch") != std::string::npos) {
+        const size_t batch_poll_at = source.find(old_batch_poll);
+        if (batch_poll_at == std::string::npos) {
+            log_event(L"warn", L"lua", L"A finished search for new songs does not return the playlist files it found.");
+        } else {
+            source.replace(batch_poll_at, old_batch_poll.size(), new_batch_poll);
+        }
+    }
+    const std::string old_idle_done =
+        "\t\treturn {\n"
+        "\t\t\tlisting = false,\n"
+        "\t\t\tdone = true,\n"
+        "\t\t\tprocessed = 0,\n"
+        "\t\t\tremaining = 0,\n"
+        "\t\t\ttotalFiles = 0,\n"
+        "\t\t\ttotalTracks = totalTracks,\n"
+        "\t\t\tadded = scanState.addedThisScan or 0,\n"
+        "\t\t\tplaylistsUpdated = sync_discovered_playlists(),\n"
+        "\t\t}\n";
+    const std::string new_idle_done =
+        "\t\tif listed then\n"
+        "\t\t\tlisted.done = true\n"
+        "\t\t\tlisted.listing = false\n"
+        "\t\t\tlisted.processed = listed.processed or 0\n"
+        "\t\t\tlisted.remaining = 0\n"
+        "\t\t\tlisted.totalTracks = totalTracks\n"
+        "\t\t\tif listed.playlistsUpdated == nil then\n"
+        "\t\t\t\tlisted.playlistsUpdated = sync_discovered_playlists()\n"
+        "\t\t\tend\n"
+        "\t\t\treturn listed\n"
+        "\t\tend\n"
+        "\t\treturn {\n"
+        "\t\t\tlisting = false,\n"
+        "\t\t\tdone = true,\n"
+        "\t\t\tprocessed = 0,\n"
+        "\t\t\tremaining = 0,\n"
+        "\t\t\ttotalFiles = 0,\n"
+        "\t\t\ttotalTracks = totalTracks,\n"
+        "\t\t\tadded = scanState.addedThisScan or 0,\n"
+        "\t\t\tplaylistsUpdated = sync_discovered_playlists(),\n"
+        "\t\t}\n";
+    if (source.find("function library.scan_batch") != std::string::npos) {
+        const size_t idle_done_at = source.find(old_idle_done);
+        if (idle_done_at == std::string::npos) {
+            log_event(L"warn", L"lua", L"Scan For New Tracks still reports that nothing was found before playlist files are imported.");
+        } else {
+            source.replace(idle_done_at, old_idle_done.size(), new_idle_done);
+        }
+    }
     const size_t list_finish_at = source.find(old_list_finish);
     if (list_finish_at == std::string::npos) {
         if (source.find("function listing_can_finish") != std::string::npos && source.find("if walkJob.active then") == std::string::npos) {

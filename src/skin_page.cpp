@@ -493,10 +493,10 @@ std::string patched_player_bootstrap_text() {
         return {};
     }
     const std::string old_rev = "var ASSET_REV = \"20261027-version-1.15.0\"";
-    const std::string new_rev = "var ASSET_REV = \"20261112-version-1.16.0-skip-known\"";
+    const std::string new_rev = "var ASSET_REV = \"20261112-version-1.16.0-scan-playlists\"";
     const size_t at = text.find(old_rev);
     if (at == std::string::npos) {
-        if (text.find("20261112-version-1.16.0-skip-known") == std::string::npos) {
+        if (text.find("20261112-version-1.16.0-scan-playlists") == std::string::npos) {
             log_event(L"warn", L"inject", L"The player loader still uses version 1.15.0, so Steam can keep showing the old page.");
         }
     } else {
@@ -3957,7 +3957,7 @@ std::string patched_player_ui_text() {
         "\t\t\t\t\t+ (seen ? \" \" + seen + \" files seen\" : \"\");\n";
     const std::string new_listing_text =
         "\t\t\t\tApp.scanProgress.folder = progress.folder || App.scanProgress.folder || \"\";\n"
-        "\t\t\t\tApp.scanStatusText = (UI.scanNewOnly ? \"Looking for new tracks\\u2026\" : \"Finding audio files\\u2026\")\n"
+        "\t\t\t\tApp.scanStatusText = (UI.scanNewOnly ? \"Looking for new songs and playlist files\\u2026\" : \"Finding audio files\\u2026\")\n"
         "\t\t\t\t\t+ (App.scanProgress.folder ? \" in \" + App.scanProgress.folder + \" and the folders inside it\" : \"\")\n"
         "\t\t\t\t\t+ (seen ? \" \" + seen + \" files seen\" : \"\");\n";
     const size_t listing_text_at = ui.find(old_listing_text);
@@ -3966,13 +3966,63 @@ std::string patched_player_ui_text() {
     } else {
         ui.replace(listing_text_at, old_listing_text.size(), new_listing_text);
     }
+    const std::string old_done_progress =
+        "\t\t\t\t\tadded: isFinite(addedDone) ? addedDone : null,\n"
+        "\t\t\t\t};\n";
+    const std::string new_done_progress =
+        "\t\t\t\t\tadded: isFinite(addedDone) ? addedDone : null,\n"
+        "\t\t\t\t\tplaylists: Number(progress.playlistsUpdated) || 0,\n"
+        "\t\t\t\t};\n";
+    const size_t done_progress_at = ui.find(old_done_progress);
+    if (done_progress_at == std::string::npos) {
+        log_event(L"warn", L"inject", L"Scan For New Tracks still forgets playlist files it found, so the page cannot say they were added.");
+    } else {
+        ui.replace(done_progress_at, old_done_progress.size(), new_done_progress);
+    }
+    const std::string old_done_label =
+        "\t\t\t\t\tif (added > 0) {\n"
+        "\t\t\t\t\t\tlabel = \"Added \" + added + \" new tracks. \" + (progress.totalTracks || 0) + \" in the library.\";\n"
+        "\t\t\t\t\t} else {\n"
+        "\t\t\t\t\t\tlabel = \"No new tracks found. \" + (progress.totalTracks || 0) + \" already in the library.\";\n"
+        "\t\t\t\t\t}\n";
+    const std::string new_done_label =
+        "\t\t\t\t\tvar lists = Number(progress.playlists) || 0;\n"
+        "\t\t\t\t\tif (added > 0) {\n"
+        "\t\t\t\t\t\tlabel = \"Added \" + added + \" new tracks\" + (lists > 0 ? \" and \" + lists + \" playlist files\" : \"\") + \". \" + (progress.totalTracks || 0) + \" in the library.\";\n"
+        "\t\t\t\t\t} else if (lists > 0) {\n"
+        "\t\t\t\t\t\tlabel = \"Added \" + lists + \" playlist files. \" + (progress.totalTracks || 0) + \" songs already in the library.\";\n"
+        "\t\t\t\t\t} else {\n"
+        "\t\t\t\t\t\tlabel = \"No new songs or playlist files found. \" + (progress.totalTracks || 0) + \" already in the library.\";\n"
+        "\t\t\t\t\t}\n";
+    const size_t done_label_at = ui.find(old_done_label);
+    if (done_label_at == std::string::npos) {
+        log_event(L"warn", L"inject", L"The scan finished message still talks only about tracks, so a new playlist file looks like nothing was found.");
+    } else {
+        ui.replace(done_label_at, old_done_label.size(), new_done_label);
+    }
+    const std::string old_scan_toast = "UI.showToast(added > 0 ? \"Added \" + added + \" new tracks.\" : \"No new tracks found.\");";
+    const std::string new_scan_toast =
+        "var lists = Number(App.scanProgress && App.scanProgress.playlists) || 0;\n"
+        "\t\t\t\t\t\tif (added > 0 && lists > 0) {\n"
+        "\t\t\t\t\t\t\tUI.showToast(\"Added \" + added + \" new tracks and \" + lists + \" playlist files.\");\n"
+        "\t\t\t\t\t\t} else if (lists > 0) {\n"
+        "\t\t\t\t\t\t\tUI.showToast(\"Added \" + lists + \" playlist files.\");\n"
+        "\t\t\t\t\t\t} else {\n"
+        "\t\t\t\t\t\t\tUI.showToast(added > 0 ? \"Added \" + added + \" new tracks.\" : \"No new songs or playlist files found.\");\n"
+        "\t\t\t\t\t\t}";
+    const size_t scan_toast_at = ui.find(old_scan_toast);
+    if (scan_toast_at == std::string::npos) {
+        log_event(L"warn", L"inject", L"Scan For New Tracks still announces only tracks, so a new playlist file looks like nothing was found.");
+    } else {
+        ui.replace(scan_toast_at, old_scan_toast.size(), new_scan_toast);
+    }
     const std::string old_banner =
         "\t\t\t\tlabel = UI.scanNewOnly ? \"Looking for new tracks\xE2\x80\xA6\" : \"Finding audio files\xE2\x80\xA6\";\n"
         "\t\t\t\tif (progress.totalFiles > 0) {\n"
         "\t\t\t\t\tlabel += \" \" + progress.totalFiles + \" files seen\";\n"
         "\t\t\t\t}\n";
     const std::string new_banner =
-        "\t\t\t\tlabel = (UI.scanNewOnly ? \"Looking for new tracks\xE2\x80\xA6\" : \"Finding audio files\xE2\x80\xA6\")\n"
+        "\t\t\t\tlabel = (UI.scanNewOnly ? \"Looking for new songs and playlist files\xE2\x80\xA6\" : \"Finding audio files\xE2\x80\xA6\")\n"
         "\t\t\t\t\t+ (progress.folder ? \" in \" + progress.folder + \" and the folders inside it\" : \"\");\n"
         "\t\t\t\tif (progress.totalFiles > 0) {\n"
         "\t\t\t\t\tlabel += \" \" + progress.totalFiles + \" files seen\";\n"
@@ -4056,7 +4106,7 @@ std::string patched_player_ui_text() {
         "\t\t\t\t\t\tUI._scanStillOpen = true;\n"
         "\t\t\t\t\t}\n"
         "\t\t\t\t\tif (batchInfo.done) {\n"
-        "\t\t\t\t\t\tif (UI._scanStillOpen && !(batchInfo.totalFiles > 0) && !(batchInfo.remaining > 0) && resumesLeft > 0) {\n"
+        "\t\t\t\t\t\tif (!batchInfo.newOnly && UI._scanStillOpen && !(batchInfo.totalFiles > 0) && !(batchInfo.remaining > 0) && resumesLeft > 0) {\n"
         "\t\t\t\t\t\t\treturn resume(new Error(\"the scan stopped before the library was saved\"), resumesLeft, startOrPoll);\n"
         "\t\t\t\t\t\t}\n"
         "\t\t\t\t\t\tUI._scanStillOpen = false;\n"
