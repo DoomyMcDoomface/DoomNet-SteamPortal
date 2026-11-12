@@ -271,54 +271,61 @@ int Lua_remove_all(lua_State* L) {
 }
 
 int Lua_list(lua_State* L) {
-    fsn::path path;
-    if (!arg_path(L, 1, path)) {
+    std::wstring wide;
+    if (!try_wide_path(L, 1, wide)) {
         return bad_path_pair(L, 1);
     }
-    std::error_code ec;
-    fsn::directory_iterator it(path, fsn::directory_options::skip_permission_denied, ec);
-    if (ec) {
-        return push_error_pair(L, ec);
+    // FindFirstFile keeps going after one bad name. The C++ directory
+    // iterator stopped at that name, so a song added later in the same
+    // folder was never reported.
+    std::wstring pattern = wide;
+    if (!pattern.empty() && pattern.back() != L'\\' && pattern.back() != L'/') {
+        pattern.push_back(L'\\');
     }
-    const fsn::directory_iterator end;
+    pattern.push_back(L'*');
+    WIN32_FIND_DATAW data{};
+    const HANDLE found = FindFirstFileW(pattern.c_str(), &data);
+    if (found == INVALID_HANDLE_VALUE) {
+        return push_error_pair(L, std::error_code(GetLastError(), std::system_category()));
+    }
     lua_newtable(L);
     lua_Integer index = 1;
-    for (; it != end; it.increment(ec)) {
-        if (ec) {
-            break;
+    do {
+        if (wcscmp(data.cFileName, L".") == 0 || wcscmp(data.cFileName, L"..") == 0) {
+            continue;
         }
-        const fsn::directory_entry& entry = *it;
-        std::error_code entry_ec;
+        const bool is_dir = (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+        const bool reparse = (data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+        // A cloud placeholder is a reparse point and still a real folder.
+        // Only a junction or a symbolic link is skipped, because those can
+        // point back into the music folder and list the same songs forever.
+        const bool link = reparse && (data.dwReserved0 == IO_REPARSE_TAG_MOUNT_POINT || data.dwReserved0 == IO_REPARSE_TAG_SYMLINK);
+        std::wstring full = wide;
+        if (!full.empty() && full.back() != L'\\' && full.back() != L'/') {
+            full.push_back(L'\\');
+        }
+        full += data.cFileName;
         lua_newtable(L);
-        push_path(L, entry.path().filename());
+        const std::string name = wide_to_utf8(data.cFileName);
+        lua_pushlstring(L, name.data(), name.size());
         lua_setfield(L, -2, "name");
-        push_path(L, entry.path());
+        const std::string path_text = wide_to_utf8(full);
+        lua_pushlstring(L, path_text.data(), path_text.size());
         lua_setfield(L, -2, "path");
-        lua_pushboolean(L, entry_is_directory(entry));
+        lua_pushboolean(L, is_dir);
         lua_setfield(L, -2, "is_directory");
-        const bool is_file = entry.is_regular_file(entry_ec);
-        lua_pushboolean(L, is_file);
+        lua_pushboolean(L, !is_dir);
         lua_setfield(L, -2, "is_file");
-        const bool link = entry.is_symlink(entry_ec) || (entry_is_directory(entry) && path_is_folder_link(entry.path()));
         lua_pushboolean(L, link);
         lua_setfield(L, -2, "is_symlink");
-        if (is_file) {
-            std::error_code size_ec;
-            const auto size = entry.file_size(size_ec);
-            if (!size_ec) {
-                push_count(L, size);
-                lua_setfield(L, -2, "size");
-            }
+        if (!is_dir) {
+            const unsigned long long size = (static_cast<unsigned long long>(data.nFileSizeHigh) << 32) | data.nFileSizeLow;
+            push_count(L, size);
+            lua_setfield(L, -2, "size");
         }
         lua_rawseti(L, -2, index++);
-    }
-    if (ec) {
-        // A listing that stopped part way is returned with the reason, so the
-        // caller keeps what was read. Millennium threw and returned nothing.
-        const std::string message = "directory listing stopped early: " + ec.message();
-        lua_pushlstring(L, message.data(), message.size());
-        return 2;
-    }
+    } while (FindNextFileW(found, &data));
+    FindClose(found);
     return 1;
 }
 
@@ -2102,6 +2109,37 @@ std::string patched_player_module(const std::string& module, std::string source)
     }
     const std::string old_group = "\t\t\t\tgroup = { paths = {}, outs = {} }\n";
     const std::string new_group = "\t\t\t\tgroup = { paths = {}, outs = {}, sample = track }\n";
+    const std::string old_art_paths =
+        "\t\t\tif track.hasArt then\n"
+        "\t\t\t\ttable.insert(group.paths, 1, track.path)\n"
+        "\t\t\t\tif #group.paths > 3 then\n"
+        "\t\t\t\t\tgroup.paths[#group.paths] = nil\n"
+        "\t\t\t\tend\n"
+        "\t\t\telseif #group.paths < 3 then\n"
+        "\t\t\t\tgroup.paths[#group.paths + 1] = track.path\n"
+        "\t\t\tend\n";
+    const std::string new_art_paths =
+        "\t\t\tgroup.seenPath = group.seenPath or {}\n"
+        "\t\t\tif not group.seenPath[track.path] then\n"
+        "\t\t\t\tgroup.seenPath[track.path] = true\n"
+        "\t\t\t\tif track.hasArt then\n"
+        "\t\t\t\t\ttable.insert(group.paths, 1, track.path)\n"
+        "\t\t\t\telse\n"
+        "\t\t\t\t\tgroup.paths[#group.paths + 1] = track.path\n"
+        "\t\t\t\tend\n"
+        "\t\t\t\t-- The first songs in an album often have no picture. Keep a\n"
+        "\t\t\t\t-- spread of later songs, and let the worker stop once it has a real cover.\n"
+        "\t\t\t\tif #group.paths > 24 then\n"
+        "\t\t\t\t\tif track.hasArt then\n"
+        "\t\t\t\t\t\tgroup.paths[#group.paths] = nil\n"
+        "\t\t\t\t\telse\n"
+        "\t\t\t\t\t\tlocal slot = 8 + ((group.spin or 0) % 16)\n"
+        "\t\t\t\t\t\tgroup.spin = (group.spin or 0) + 1\n"
+        "\t\t\t\t\t\tgroup.paths[slot] = group.paths[#group.paths]\n"
+        "\t\t\t\t\t\tgroup.paths[#group.paths] = nil\n"
+        "\t\t\t\t\tend\n"
+        "\t\t\t\tend\n"
+        "\t\t\tend\n";
     const std::string old_jobs_line = "\tlines[#lines + 1] = \"JOBS\"\n";
     const std::string new_jobs_line =
         "\tif doomnetArtSteamUi and doomnetArtSteamUi ~= \"\" then\n"
@@ -2117,7 +2155,7 @@ std::string patched_player_module(const std::string& module, std::string source)
         "\t\tend\n"
         "\t\tlines[#lines + 1] = \"===\"\n";
     const std::string old_display = "\tif size < 32 or size > 48 * 1024 * 1024 then\n";
-    const std::string new_display = "\tif size < 32 or size > 64 * 1024 * 1024 then\n";
+    const std::string new_display = "\tif size < 32 or size > 512 * 1024 * 1024 then\n";
     if (source.find("function library.regenerate_artwork") != std::string::npos) {
         const size_t group_at = source.find(old_group);
         const size_t jobs_line_at = source.find(old_jobs_line);
@@ -2128,6 +2166,12 @@ std::string patched_player_module(const std::string& module, std::string source)
             source.replace(sep_at, old_sep.size(), new_sep);
             source.replace(source.find(old_jobs_line), old_jobs_line.size(), new_jobs_line);
             source.replace(source.find(old_group), old_group.size(), new_group);
+            const size_t art_paths_at = source.find(old_art_paths);
+            if (art_paths_at == std::string::npos) {
+                log_event(L"warn", L"lua", L"Regenerate Artwork still reads only the first three songs in an album, so a cover stored on a later song is missed.");
+            } else {
+                source.replace(art_paths_at, old_art_paths.size(), new_art_paths);
+            }
         }
     }
     if (source.find("file_is_displayable") != std::string::npos) {
@@ -2147,7 +2191,7 @@ std::string patched_player_module(const std::string& module, std::string source)
         "\t\tcontent = content:gsub(\"%$side = Find%-Sidecar %$audioPath %$roots\", \"if ($audioPath -match '(?i)\\\\.musiclibrary\\\\\\\\|\\\\\\\\DoomNet Art\\\\\\\\') { return $null }\\n\\t$side = Find-Sidecar $audioPath $roots\\n\\tif ($side -match '(?i)\\\\.musiclibrary\\\\\\\\|\\\\\\\\DoomNet Art\\\\\\\\') { $side = $null }\", 1)\n"
         "\t\tcontent = content:gsub(\"%$head = Read%-Bytes %$audioPath 16777216\", \"$head = Read-EmbeddedHead $audioPath\", 1)\n"
         "\t\tcontent = content:gsub(\"function Extract%-Art%(%[string%]%$audioPath, %[string%[%]]%$roots%) {\", [=[function Read-EmbeddedHead([string]$audioPath) {\n"
-        "\t$cap = 67108864\n"
+        "\t$cap = 536870912\n"
         "\t$probe = Read-Bytes $audioPath 10\n"
         "\t$path = $audioPath\n"
         "\tif (-not $probe -or $probe.Length -lt 8) { return $probe }\n"
@@ -2227,6 +2271,11 @@ std::string patched_player_module(const std::string& module, std::string source)
         "\t\tcontent = content:gsub(\"if %(Write%-ArtJson %$out %$img%) { %$written%+%+ }\", \"if ($out -like '*.json') { if (Write-ArtJson $out $img) { $written++ } }\", 1)\n"
         "\t\tcontent = content:gsub(\"Write%-ProgressFile %$progressPath %(%$n %+ 1%) %$total %$written %$true\", \"if ($img -and $job.show -and -not (Test-Path -LiteralPath (Join-Path (Split-Path $JobDir -Parent) ('art_jpeg\\albums\\' + $job.show + '.custom')))) {\\n\\t\\t\\t\\t$ext = 'jpg'\\n\\t\\t\\t\\tif ($img.Length -ge 8 -and $img[0] -eq 0x89) { $ext = 'png' }\\n\\t\\t\\t\\t$shown = @()\\n\\t\\t\\t\\tif ($script:DoomNetSteamUi) { $shown += (Join-Path $script:DoomNetSteamUi ('steam-music-player\\art\\albums\\' + $job.show + '.' + $ext)) }\\n\\t\\t\\t\\t$shown += (Join-Path (Split-Path $JobDir -Parent) ('art_jpeg\\albums\\' + $job.show + '.' + $ext))\\n\\t\\t\\t\\tforeach ($destImg in $shown) {\\n\\t\\t\\t\\t\\t$dirImg = Split-Path -Parent $destImg\\n\\t\\t\\t\\t\\tif ($dirImg -and -not (Test-Path -LiteralPath $dirImg)) { New-Item -ItemType Directory -Path $dirImg -Force | Out-Null }\\n\\t\\t\\t\\t\\t[IO.File]::WriteAllBytes($destImg, $img)\\n\\t\\t\\t\\t}\\n\\t\\t\\t}\\n\\t\\t\\tWrite-ProgressFile $progressPath ($n + 1) $total $written $true\", 1)\n"
         "\t\tcontent = content:gsub(\"%$tail = Read%-Tail %$audioPath 8388608\", \"$tail = Read-Tail $audioPath 2097152\", 1)\n"
+        "\t\tcontent = content:gsub(\"function Be32\", \"function Test-RealCover([byte[]]$img) {\\n\\tif (-not $img -or $img.Length -lt 32) { return $false }\\n\\tif ($img[0] -eq 0xFF -and $img[1] -eq 0xD8 -and $img[2] -eq 0xFF) { return $true }\\n\\tif ($img.Length -ge 8 -and $img[0] -eq 0x89 -and $img[1] -eq 0x50 -and $img[2] -eq 0x4E -and $img[3] -eq 0x47) { return $true }\\n\\tif ($img.Length -ge 12 -and $img[0] -eq 0x52 -and $img[1] -eq 0x49 -and $img[2] -eq 0x46 -and $img[3] -eq 0x46 -and $img[8] -eq 0x57 -and $img[9] -eq 0x45 -and $img[10] -eq 0x42 -and $img[11] -eq 0x50) { return $true }\\n\\treturn $false\\n}\\nfunction Be32\", 1)\n"
+        "\t\tcontent = content:gsub(\"return %$img\", \"if (Test-RealCover $img) { return $img }\", 20)\n"
+        "\t\tcontent = content:gsub(\"%$size %-ge 24 %-and %$size %-le 8MB\", \"$size -ge 24\", 1)\n"
+        "\t\tcontent = content:gsub(\"%$img = %$null%s+foreach %(%$src in %$job%.paths%) {%s+%$img = Extract%-Art %$src %$rootArr%s+if %(%$img%) { break }%s+}\", \"$img = $null\\n\\t\\t$bestCover = $null\\n\\t\\tforeach ($src in $job.paths) {\\n\\t\\t\\t$img = Extract-Art $src $rootArr\\n\\t\\t\\tif (-not (Test-RealCover $img)) { $img = $null }\\n\\t\\t\\tif ($img -and ((-not $bestCover) -or $img.Length -gt $bestCover.Length)) { $bestCover = $img }\\n\\t\\t\\tif ($bestCover -and $bestCover.Length -ge 50000) { break }\\n\\t\\t}\\n\\t\\t$img = $bestCover\", 1)\n"
+        "\t\tcontent = content:gsub(\"if %(%$hits%.Count %-gt 0%) { return %$hits%[0]%.FullName }\", \"$bestImg = $hits | Sort-Object Length -Descending | Select-Object -First 1\\n\\t\\tif ($bestImg) { return $bestImg.FullName }\", 1)\n"
         "\t\tpcall(utils.write_file, dest, content)\n"
         "\tend\n";
     const size_t worker_at = source.find(old_worker);
@@ -2331,10 +2380,64 @@ std::string patched_player_module(const std::string& module, std::string source)
         source.replace(found, old_gate.size(), new_gate);
         gate_from = found + new_gate.size();
     }
-    const std::string old_walk_ps =
-        "    foreach ($c in [System.IO.Directory]::EnumerateDirectories($dir)) { Walk $c }";
+    const std::string old_write_files =
+        "\t\t\"    foreach ($p in [System.IO.Directory]::EnumerateFiles($dir)) {\",\n"
+        "\t\t\"      $ext = [System.IO.Path]::GetExtension($p).ToLowerInvariant()\",\n"
+        "\t\t\"      if ($exts.ContainsKey($ext)) { $sw.WriteLine($p) }\",\n"
+        "\t\t\"      elseif ($plexts.ContainsKey($ext)) { $pl.WriteLine($p) }\",\n"
+        "\t\t\"    }\",\n";
+    const std::string new_write_files =
+        "\t\t\"    foreach ($p in [System.IO.Directory]::EnumerateFiles($dir)) {\",\n"
+        "\t\t\"      try {\",\n"
+        "\t\t\"        $ext = [System.IO.Path]::GetExtension($p).ToLowerInvariant()\",\n"
+        "\t\t\"        if ($exts.ContainsKey($ext)) { $sw.WriteLine($p) }\",\n"
+        "\t\t\"        elseif ($plexts.ContainsKey($ext)) { $pl.WriteLine($p) }\",\n"
+        "\t\t\"      } catch {}\",\n"
+        "\t\t\"    }\",\n";
+    const size_t write_files_at = source.find(old_write_files);
+    if (write_files_at == std::string::npos) {
+        if (source.find("function WriteFiles") != std::string::npos) {
+            log_event(L"warn", L"lua", L"One unreadable file still stops the folder listing, so songs after it are left out.");
+        }
+    } else {
+        source.replace(write_files_at, old_write_files.size(), new_write_files);
+    }
+    const std::string old_new_cache =
+        "\tfor _, folder in ipairs(listJob.folders) do\n"
+        "\t\tcollect_root_audio(folder, listJob.results)\n"
+        "\t\tread_scan_result_file(folder, listJob.results, scan_new_path())\n"
+        "\tend\n";
+    const std::string new_new_cache =
+        "\tif newOnly then\n"
+        "\t\tprocexec.delete_file(scan_new_path())\n"
+        "\t\tprocexec.delete_file(scan_new_path() .. \".started\")\n"
+        "\tend\n"
+        "\tfor _, folder in ipairs(listJob.folders) do\n"
+        "\t\tcollect_root_audio(folder, listJob.results)\n"
+        "\t\tif not newOnly then\n"
+        "\t\t\tread_scan_result_file(folder, listJob.results, scan_new_path())\n"
+        "\t\tend\n"
+        "\tend\n";
+    const size_t new_cache_at = source.find(old_new_cache);
+    if (new_cache_at == std::string::npos) {
+        if (source.find("scan_new_path()") != std::string::npos) {
+            log_event(L"warn", L"lua", L"Scan For New Files still trusts the previous listing, so a song added since then is skipped.");
+        }
+    } else {
+        source.replace(new_cache_at, old_new_cache.size(), new_new_cache);
+    }
+    const std::string old_walk_ps = "function Walk([string]$dir) {";
     const std::string new_walk_ps =
-        "    foreach ($c in [System.IO.Directory]::EnumerateDirectories($dir)) { $attr = [System.IO.File]::GetAttributes($c); if (($attr -band [System.IO.FileAttributes]::ReparsePoint) -eq 0) { Walk $c } }";
+        "function Walk([string]$dir) { "
+        "if (-not $script:DoomNetSeenDir) { $script:DoomNetSeenDir = @{} }; "
+        "$key = $dir.TrimEnd([char]92).ToLowerInvariant(); "
+        "if ($script:DoomNetSeenDir.ContainsKey($key)) { return }; "
+        "$script:DoomNetSeenDir[$key] = $true; "
+        "try { foreach ($t in @((Get-Item -LiteralPath $dir -Force).Target)) { "
+        "if ($t) { $full = $t; if (-not [IO.Path]::IsPathRooted($full)) { $full = Join-Path (Split-Path -Parent $dir) $t }; "
+        "$tk = ([string]$full).TrimEnd([char]92).ToLowerInvariant(); "
+        "if ($script:DoomNetSeenDir.ContainsKey($tk)) { return }; "
+        "$script:DoomNetSeenDir[$tk] = $true } } } catch {}; ";
     const size_t walk_ps_at = source.find(old_walk_ps);
     if (walk_ps_at == std::string::npos) {
         if (source.find("function Walk([string]$dir)") != std::string::npos) {
