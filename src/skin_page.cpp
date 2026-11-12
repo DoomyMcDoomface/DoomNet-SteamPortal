@@ -493,10 +493,10 @@ std::string patched_player_bootstrap_text() {
         return {};
     }
     const std::string old_rev = "var ASSET_REV = \"20261027-version-1.15.0\"";
-    const std::string new_rev = "var ASSET_REV = \"20261112-version-1.16.0-scan-playlists\"";
+    const std::string new_rev = "var ASSET_REV = \"20261112-version-1.16.0-scan-files\"";
     const size_t at = text.find(old_rev);
     if (at == std::string::npos) {
-        if (text.find("20261112-version-1.16.0-scan-playlists") == std::string::npos) {
+        if (text.find("20261112-version-1.16.0-scan-files") == std::string::npos) {
             log_event(L"warn", L"inject", L"The player loader still uses version 1.15.0, so Steam can keep showing the old page.");
         }
     } else {
@@ -4015,6 +4015,16 @@ std::string patched_player_ui_text() {
         log_event(L"warn", L"inject", L"Scan For New Tracks still announces only tracks, so a new playlist file looks like nothing was found.");
     } else {
         ui.replace(scan_toast_at, old_scan_toast.size(), new_scan_toast);
+    }
+    const std::string old_scan_button = "Scan For New Tracks";
+    const std::string new_scan_button = "Scan For New Files";
+    if (ui.find(old_scan_button) == std::string::npos) {
+        log_event(L"warn", L"inject", L"The scan button still cannot be renamed, so it does not say Scan For New Files.");
+    } else {
+        for (size_t scan_button_at = 0; (scan_button_at = ui.find(old_scan_button, scan_button_at)) != std::string::npos;) {
+            ui.replace(scan_button_at, old_scan_button.size(), new_scan_button);
+            scan_button_at += new_scan_button.size();
+        }
     }
     const std::string old_banner =
         "\t\t\t\tlabel = UI.scanNewOnly ? \"Looking for new tracks\xE2\x80\xA6\" : \"Finding audio files\xE2\x80\xA6\";\n"
