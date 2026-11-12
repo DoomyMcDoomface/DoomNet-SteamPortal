@@ -493,10 +493,10 @@ std::string patched_player_bootstrap_text() {
         return {};
     }
     const std::string old_rev = "var ASSET_REV = \"20261027-version-1.15.0\"";
-    const std::string new_rev = "var ASSET_REV = \"20261112-version-1.16.0-art-embedded\"";
+    const std::string new_rev = "var ASSET_REV = \"20261112-version-1.16.0-skip-known\"";
     const size_t at = text.find(old_rev);
     if (at == std::string::npos) {
-        if (text.find("20261112-version-1.16.0-art-embedded") == std::string::npos) {
+        if (text.find("20261112-version-1.16.0-skip-known") == std::string::npos) {
             log_event(L"warn", L"inject", L"The player loader still uses version 1.15.0, so Steam can keep showing the old page.");
         }
     } else {
@@ -3925,11 +3925,11 @@ std::string patched_player_ui_text() {
         "\t\t\t\t\t}).then(function (folders) {\n"
         "\t\t\t\t\t\tUI.applyFolders(folders);\n"
         "\t\t\t\t\t\tUI.safely(\"renderSettingsView\", UI.renderSettingsView);\n"
-        "\t\t\t\t\t\tUI.scanNewOnly = false;\n"
+        "\t\t\t\t\t\tUI.scanNewOnly = true;\n"
         "\t\t\t\t\t\treturn UI.runScanExclusive(function (progress) {\n"
         "\t\t\t\t\t\t\tUI.applyScanProgress(progress);\n"
         "\t\t\t\t\t\t\tUI.safely(\"renderSettingsView\", UI.renderSettingsView);\n"
-        "\t\t\t\t\t\t}, true);\n"
+        "\t\t\t\t\t\t}, false, true);\n"
         "\t\t\t\t\t});\n"
         "\t\t\t\t}).catch(function (err) {\n"
         "\t\t\t\t\taddBtn.disabled = false;\n"

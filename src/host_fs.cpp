@@ -2019,18 +2019,67 @@ std::string patched_player_module(const std::string& module, std::string source)
         "\tend\n"
         "\tif #listJob.folders == 0 then\n";
     const std::string new_list_gate =
+        "\tlistJob.addedOnly = false\n"
+        "\tlocal onlyAdded = listJob.newOnly and doomnetAddedFolder\n"
         "\tfor _, folder in ipairs(state.folders) do\n"
-        "\t\tif fs.exists(folder) and (fs.is_directory(folder) or not fs.is_file(folder)) then\n"
+        "\t\tif onlyAdded and folder ~= doomnetAddedFolder then\n"
+        "\t\telseif fs.exists(folder) and (fs.is_directory(folder) or not fs.is_file(folder)) then\n"
         "\t\t\tlistJob.folders[#listJob.folders + 1] = folder\n"
         "\t\telse\n"
         "\t\t\tlogger:warn(\"[SteamMusicPlayer] music folder was not scanned because it is missing or not a folder: \" .. tostring(folder))\n"
         "\t\tend\n"
+        "\tend\n"
+        "\tif onlyAdded then\n"
+        "\t\tlistJob.addedOnly = true\n"
+        "\t\tdoomnetAddedFolder = nil\n"
+        "\t\tlogger:info(\"[SteamMusicPlayer] only the folder just added is being scanned. Songs already in the library are skipped.\")\n"
         "\tend\n"
         "\tif #listJob.folders > 0 then\n"
         "\t\tlistJob.currentFolder = listJob.folders[1]\n"
         "\t\tlogger:info(\"[SteamMusicPlayer] scanning '\" .. tostring(listJob.folders[1]) .. \"' and every folder inside it. \" .. tostring(#listJob.folders) .. \" music folder(s) are configured.\")\n"
         "\tend\n"
         "\tif #listJob.folders == 0 then\n";
+    const std::string old_add_folder =
+        "\tstate.folders[#state.folders + 1] = path\n"
+        "\tutils.write_file(folders_path(), json.encode(state.folders))\n"
+        "\treturn true\n"
+        "end\n";
+    const std::string new_add_folder =
+        "\tstate.folders[#state.folders + 1] = path\n"
+        "\tutils.write_file(folders_path(), json.encode(state.folders))\n"
+        "\tdoomnetAddedFolder = path\n"
+        "\treturn true\n"
+        "end\n";
+    if (source.find("function library.add_folder(path)") != std::string::npos) {
+        const size_t add_folder_at = source.find(old_add_folder);
+        if (add_folder_at == std::string::npos) {
+            log_event(L"warn", L"lua", L"Adding a folder still scans every saved song again.");
+        } else {
+            source.replace(add_folder_at, old_add_folder.size(), new_add_folder);
+        }
+    }
+    const std::string old_lua_walk =
+        "local function start_lua_walk()\n"
+        "\treset_lua_walk()\n"
+        "\twalkJob.active = true\n"
+        "\tfor _, folder in ipairs(state.folders) do\n";
+    const std::string new_lua_walk =
+        "local function start_lua_walk()\n"
+        "\treset_lua_walk()\n"
+        "\twalkJob.active = true\n"
+        "\tlocal folders = state.folders\n"
+        "\tif listJob.addedOnly and listJob.folders and #listJob.folders > 0 then\n"
+        "\t\tfolders = listJob.folders\n"
+        "\tend\n"
+        "\tfor _, folder in ipairs(folders) do\n";
+    if (source.find("local function start_lua_walk()") != std::string::npos) {
+        const size_t lua_walk_at = source.find(old_lua_walk);
+        if (lua_walk_at == std::string::npos) {
+            log_event(L"warn", L"lua", L"A new folder still walks every music folder already in the library.");
+        } else {
+            source.replace(lua_walk_at, old_lua_walk.size(), new_lua_walk);
+        }
+    }
     const size_t list_gate_at = source.find(old_list_gate);
     if (list_gate_at == std::string::npos) {
         log_event(L"warn", L"lua", L"The scan does not record which music folder it opened, so a saved folder can be skipped with no line in the log.");
