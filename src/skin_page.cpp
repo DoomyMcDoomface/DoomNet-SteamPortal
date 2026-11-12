@@ -135,6 +135,9 @@ std::string lighten_hex(const std::string& hex, double amount) {
 
 void replace_hex_color(std::string& css, const char* from, const std::string& to) {
     const size_t width = 7;
+    if (to.size() != width) {
+        return;
+    }
     for (size_t i = 0; i + width <= css.size();) {
         if (css[i] == '#' && _strnicmp(css.c_str() + i, from, width) == 0) {
             const bool longer = i + width < css.size() && hex_value(css[i + width]) >= 0;
@@ -418,6 +421,128 @@ void keep_one_repeated_block(std::string& text, const std::string& marker) {
     }
 }
 
+bool local_css_import(const std::string& line, std::string& file_name) {
+    file_name.clear();
+    size_t i = 0;
+    while (i < line.size() && (line[i] == ' ' || line[i] == '\t' || line[i] == '\r')) {
+        ++i;
+    }
+    if (line.compare(i, 7, "@import") != 0) {
+        return false;
+    }
+    const size_t url_at = line.find("url(", i);
+    size_t start = std::string::npos;
+    if (url_at != std::string::npos) {
+        start = url_at + 4;
+        while (start < line.size() && (line[start] == ' ' || line[start] == '\'' || line[start] == '"')) {
+            ++start;
+        }
+    } else {
+        i += 7;
+        while (i < line.size() && line[i] == ' ') {
+            ++i;
+        }
+        if (i < line.size() && (line[i] == '\'' || line[i] == '"')) {
+            start = i + 1;
+        }
+    }
+    if (start == std::string::npos || start >= line.size()) {
+        return false;
+    }
+    size_t stop = start;
+    while (stop < line.size() && line[stop] != '\'' && line[stop] != '"' && line[stop] != ')') {
+        ++stop;
+    }
+    std::string path = line.substr(start, stop - start);
+    if (path.find("..") != std::string::npos || path.find(':') != std::string::npos || path.find('\\') != std::string::npos || path.find("//") != std::string::npos) {
+        return false;
+    }
+    if (path.rfind("./", 0) == 0) {
+        path = path.substr(2);
+    }
+    if (path.find('/') != std::string::npos || path.size() < 5) {
+        return false;
+    }
+    if (_stricmp(path.c_str() + (path.size() - 4), ".css") != 0) {
+        return false;
+    }
+    for (char ch : path) {
+        const bool ok = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '.' || ch == '_' || ch == '-';
+        if (!ok) {
+            return false;
+        }
+    }
+    file_name = path;
+    return true;
+}
+
+// Steam drops a whole stylesheet when an @import fails. The library sheet
+// imports config.css, so a missing or empty neighbor removes the skin and the
+// player has nothing to sit in. The published file carries those rules itself.
+std::string inline_local_imports(const std::string& css, const std::wstring& skin_dir, int depth) {
+    if (depth > 4) {
+        return css;
+    }
+    std::string out;
+    out.reserve(css.size() + 64);
+    size_t line = 0;
+    while (line < css.size()) {
+        size_t end = css.find('\n', line);
+        const bool last = end == std::string::npos;
+        if (last) {
+            end = css.size();
+        }
+        const std::string row = css.substr(line, end - line);
+        std::string name;
+        if (local_css_import(row, name)) {
+            const std::string imported = read_skin_text(skin_dir, name);
+            if (!imported.empty()) {
+                out += inline_local_imports(imported, skin_dir, depth + 1);
+                if (out.empty() || out.back() != '\n') {
+                    out.push_back('\n');
+                }
+            } else {
+                out += row;
+                if (!last) {
+                    out.push_back('\n');
+                }
+            }
+        } else {
+            out += row;
+            if (!last) {
+                out.push_back('\n');
+            }
+        }
+        if (last) {
+            break;
+        }
+        line = end + 1;
+    }
+    return out;
+}
+
+bool replace_skin_file(const std::wstring& path, const std::string& body, std::wstring& error) {
+    error.clear();
+    if (body.empty()) {
+        error = L"Refusing to replace '" + path + L"' with an empty skin file.";
+        log_event(L"error", L"payload", error.c_str());
+        return false;
+    }
+    const std::wstring temp = path + L".writing";
+    if (!write_new_file(temp, body.data(), body.size(), error)) {
+        DeleteFileW(temp.c_str());
+        return false;
+    }
+    if (!MoveFileExW(temp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        const DWORD code = GetLastError();
+        DeleteFileW(temp.c_str());
+        error = L"Could not replace '" + path + L"' with the skin file. " + windows_error_text(code);
+        log_event(L"error", L"payload", error.c_str());
+        return false;
+    }
+    return true;
+}
+
 SkinFileCopy copy_skin_files(const std::wstring& skin_dir, const std::wstring& steam_dir) {
     SkinFileCopy result;
     if (skin_dir.empty() || steam_dir.empty() || has_dotdot(skin_dir) || has_dotdot(steam_dir)) {
@@ -468,30 +593,33 @@ SkinFileCopy copy_skin_files(const std::wstring& skin_dir, const std::wstring& s
         }
         const std::wstring from = skin_dir + L"\\" + name;
         const std::wstring to = result.destination + L"\\" + name;
-        std::string accent;
-        std::string accent_dark;
-        if (ends_with_ci(name, L".css") && saved_skin_accent(accent, accent_dark)) {
+        std::wstring file_error;
+        bool wrote = false;
+        if (ends_with_ci(name, L".css")) {
             std::string css;
-            std::wstring read_error;
-            if (!read_entire_file(from, css, read_error)) {
-                FindClose(search);
-                result.detail = read_error.empty() ? L"Could not read '" + from + L"' before recoloring SteamSkin." : read_error;
-                log_event(L"error", L"payload", result.detail.c_str());
-                return result;
+            if (!read_entire_file(from, css, file_error)) {
+                log_event(L"error", L"payload", file_error.empty() ? (L"Could not read '" + from + L"'.").c_str() : file_error.c_str());
+            } else {
+                css = inline_local_imports(css, skin_dir, 0);
+                std::string accent;
+                std::string accent_dark;
+                if (saved_skin_accent(accent, accent_dark)) {
+                    css = recolor_skin_css(std::move(css), accent, accent_dark);
+                }
+                if (replace_skin_file(to, css, file_error)) {
+                    wrote = true;
+                } else if (!file_error.empty()) {
+                    log_event(L"error", L"payload", file_error.c_str());
+                }
             }
-            css = recolor_skin_css(std::move(css), accent, accent_dark);
-            std::wstring write_error;
-            if (!write_new_file(to, css.data(), css.size(), write_error)) {
-                FindClose(search);
-                result.detail = write_error.empty() ? L"Could not write the recolored SteamSkin file '" + to + L"'." : write_error;
-                log_event(L"error", L"payload", result.detail.c_str());
-                return result;
-            }
-        } else if (!CopyFileW(from.c_str(), to.c_str(), FALSE)) {
-            FindClose(search);
-            result.detail = L"Could not copy '" + from + L"' to '" + to + L"'. " + windows_error_text(GetLastError());
-            log_event(L"error", L"payload", result.detail.c_str());
-            return result;
+        } else if (CopyFileW(from.c_str(), to.c_str(), FALSE)) {
+            wrote = true;
+        } else {
+            file_error = L"Could not copy '" + from + L"' to '" + to + L"'. " + windows_error_text(GetLastError());
+            log_event(L"error", L"payload", file_error.c_str());
+        }
+        if (!wrote) {
+            continue;
         }
         ++result.copied;
     } while (FindNextFileW(search, &found));
@@ -583,7 +711,7 @@ SkinPreamble load_skin_preamble(const std::wstring& skin_json, bool player) {
         tag.match = match;
         if (!css.empty()) {
             tag.css_url = base + css;
-            tag.css_body = read_skin_text(skin_folder, css);
+            tag.css_body = inline_local_imports(read_skin_text(skin_folder, css), skin_folder, 0);
             if (recolor_skin) {
                 tag.css_body = recolor_skin_css(std::move(tag.css_body), skin_accent, skin_accent_dark);
             }
@@ -758,10 +886,10 @@ std::string patched_player_bootstrap_text() {
         return {};
     }
     const std::string old_rev = "var ASSET_REV = \"20261027-version-1.15.0\"";
-    const std::string new_rev = "var ASSET_REV = \"20261112-version-1.18.0-playlist-files\"";
+    const std::string new_rev = "var ASSET_REV = \"20261112-version-1.18.1-skin-stays\"";
     const size_t at = text.find(old_rev);
     if (at == std::string::npos) {
-        if (text.find("20261112-version-1.18.0-playlist-files") == std::string::npos) {
+        if (text.find("20261112-version-1.18.1-skin-stays") == std::string::npos) {
             log_event(L"warn", L"inject", L"The player loader still uses version 1.15.0, so Steam can keep showing the old page.");
         }
     } else {
@@ -785,7 +913,7 @@ std::string patched_player_ui_text() {
     }
     ui.swap(normalized);
     const std::string old_plugin_version = "var PLUGIN_VERSION = \"1.15.0\"";
-    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.18.0\"";
+    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.18.1\"";
     for (size_t at = 0; (at = ui.find(old_plugin_version, at)) != std::string::npos; at += new_plugin_version.size()) {
         ui.replace(at, old_plugin_version.size(), new_plugin_version);
     }

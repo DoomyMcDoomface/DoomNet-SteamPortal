@@ -508,8 +508,11 @@ struct PageBridge::Impl : std::enable_shared_from_this<PageBridge::Impl> {
         steps->push_back({"Runtime.enable", "{}"});
         steps->push_back({"Page.enable", "{}"});
         steps->push_back({"Runtime.addBinding", "{\"name\":\"doomnet\"}"});
-        steps->push_back({"Page.addScriptToEvaluateOnNewDocument", std::string("{\"source\":") + json_quote(kBootScript) + "}"});
-        steps->push_back({"Runtime.evaluate", std::string("{\"expression\":") + json_quote(std::string(kBootScript)) + ",\"returnByValue\":true}"});
+        // The raw boot script has no skin config. A later copy then sees the
+        // binding and used to return before the player and the skin were added.
+        const std::string page_script = boot_script_for_page();
+        steps->push_back({"Page.addScriptToEvaluateOnNewDocument", std::string("{\"source\":") + json_quote(page_script) + "}"});
+        steps->push_back({"Runtime.evaluate", std::string("{\"expression\":") + json_quote(page_script) + ",\"returnByValue\":true}"});
         auto index = std::make_shared<size_t>(0);
         auto next = std::make_shared<std::function<void()>>();
         const std::shared_ptr<Impl> self = shared_from_this();

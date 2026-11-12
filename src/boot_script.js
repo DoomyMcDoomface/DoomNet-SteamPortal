@@ -68,13 +68,15 @@
         }
         return;
     }
-    if (window.Millennium && typeof window.Millennium.callServerMethod === "function" && typeof window.__doomnetCall === "function") {
-        return;
-    }
-
+    // The binding can already exist when this script runs a second time, or when
+    // a copy without the skin config ran first. Returning there skips the player
+    // and the skin, so Steam reopens with neither. Install the binding once, then
+    // always apply the config that is on this copy.
+    var BOOTSTRAP_URL = "https://steamloopback.host/steam-music-player/bootstrap.js?v=20261112-version-1.18.1-skin-stays";
+    var doomnetBindingReady = window.Millennium && typeof window.Millennium.callServerMethod === "function" && typeof window.__doomnetCall === "function";
+    if (!doomnetBindingReady) {
     var pending = {};
     var nextId = 1000000;
-    var BOOTSTRAP_URL = "https://steamloopback.host/steam-music-player/bootstrap.js?v=20261112-version-1.18.0-playlist-files";
 
     function rejectNow(message) {
         return Promise.reject(new Error(message));
@@ -191,6 +193,7 @@
             });
         }
     };
+    }
 
     function addScript(url, doc) {
         var soon = window.__doomnetScriptSoon || (window.__doomnetScriptSoon = {});
@@ -1330,33 +1333,50 @@
             } catch (err) {
                 return;
             }
-            win.HAS_INJECTED_THEME = true;
-            quietObservers(win);
-            var all = classes.concat(liveClasses(doc));
-            var patches = config.patches || [];
-            var p;
-            for (p = 0; p < patches.length; p++) {
-                var patch = patches[p] || {};
-                var match = patch.match ? String(patch.match) : "";
-                if (!match) {
-                    insertPatch(doc, patch);
-                    continue;
-                }
-                var ok = regexHit(title, match) || regexHit(url, match) || classHit(all, match);
-                if (!ok && match === "^Steam$") {
-                    ok = regexHit(title, "^Steam Games List$");
-                }
-                if (ok) {
-                    insertPatch(doc, patch);
-                }
+            if (!doc) {
+                return;
             }
-            if (title === "Steam" || title === "Steam Games List") {
-                shareHostState(win);
-                watchSteamTunesTab(win);
-                preloadLibrary(win);
+            // A skin tag that throws must not skip the player, and must not mark
+            // this window finished before the player script is in the page.
+            var skinDone = false;
+            try {
+                quietObservers(win);
+                var all = classes.concat(liveClasses(doc));
+                var patches = config.patches || [];
+                var p;
+                for (p = 0; p < patches.length; p++) {
+                    var patch = patches[p] || {};
+                    var match = patch.match ? String(patch.match) : "";
+                    if (!match) {
+                        insertPatch(doc, patch);
+                        continue;
+                    }
+                    var ok = regexHit(title, match) || regexHit(url, match) || classHit(all, match);
+                    if (!ok && match === "^Steam$") {
+                        ok = regexHit(title, "^Steam Games List$");
+                    }
+                    if (ok) {
+                        insertPatch(doc, patch);
+                    }
+                }
+                skinDone = true;
+            } catch (err) {
             }
-            if (wantsPlayer(title)) {
-                insertPlayer(win);
+            var playerDone = !wantsPlayer(title);
+            try {
+                if (title === "Steam" || title === "Steam Games List") {
+                    shareHostState(win);
+                    watchSteamTunesTab(win);
+                    preloadLibrary(win);
+                }
+                if (wantsPlayer(title)) {
+                    insertPlayer(win);
+                }
+                playerDone = true;
+            } catch (err) {
+            }
+            if (skinDone && playerDone) {
+                win.HAS_INJECTED_THEME = true;
             }
         }
 
