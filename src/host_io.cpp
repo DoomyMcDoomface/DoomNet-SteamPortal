@@ -139,23 +139,6 @@ bool parse_mode(const char* mode, OpenMode& out) {
     return true;
 }
 
-bool scan_call(lua_State* L) {
-    const HostState& host = host_of(L);
-    if (host.running == nullptr) {
-        return false;
-    }
-    const std::string& method = host.running->method;
-    return method == "scan_library_batch" || method == "rescan_library_start";
-}
-
-// A cloud placeholder has no local bytes. Opening it during a scan waits on the
-// download, and one such file keeps the progress count at 0.
-bool cloud_placeholder(const std::wstring& path) {
-    const DWORD attrs = GetFileAttributesW(with_long_path_prefix(path).c_str());
-    constexpr DWORD recall = FILE_ATTRIBUTE_OFFLINE | 0x00040000u | 0x00400000u;
-    return attrs != INVALID_FILE_ATTRIBUTES && (attrs & recall) != 0;
-}
-
 HANDLE open_handle(const std::wstring& path, const OpenMode& mode, DWORD& error, bool no_recall) {
     DWORD access = 0;
     if (mode.read) {
@@ -375,18 +358,9 @@ int Lua_io_open(lua_State* L) {
         return 3;
     }
     DWORD error = 0;
-    const bool no_recall = mode.read && !mode.write && scan_call(L);
-    if (no_recall && cloud_placeholder(path)) {
-        static bool logged = false;
-        if (!logged) {
-            logged = true;
-            log_event(L"info", L"scan", (L"A music file at '" + path + L"' is still in the cloud, so the scan is not downloading it. The count moves on and the tags stay empty until the file is on this PC.").c_str());
-        }
-        lua_pushnil(L);
-        lua_pushfstring(L, "%s: The file is still in the cloud", raw_path);
-        lua_pushinteger(L, 0);
-        return 3;
-    }
+    // Read the bytes that are already on disk. A file in the music folder is a
+    // normal file, and the scan opens it the same way as any other file.
+    const bool no_recall = false;
     HANDLE handle = open_handle(path, mode, error, no_recall);
     if (handle == INVALID_HANDLE_VALUE) {
         return push_failure(L, error, raw_path);

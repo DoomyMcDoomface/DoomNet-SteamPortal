@@ -149,8 +149,7 @@ bool entry_is_directory(const fsn::directory_entry& entry) {
     if (entry.is_directory(ec)) {
         return true;
     }
-    // A cloud placeholder can fail the C++ status check and still be a folder.
-    // The library walk uses this flag to decide whether to keep going.
+    // The directory listing uses this flag to decide whether to keep going.
     return windows_says_directory(entry.path().native());
 }
 
@@ -275,9 +274,8 @@ int Lua_list(lua_State* L) {
     if (!try_wide_path(L, 1, wide)) {
         return bad_path_pair(L, 1);
     }
-    // FindFirstFile keeps going after one bad name. The C++ directory
-    // iterator stopped at that name, so a song added later in the same
-    // folder was never reported.
+    // FindFirstFile keeps going after one bad name. Stopping at that name
+    // hid every song listed after it in the same folder.
     std::wstring pattern = wide;
     if (!pattern.empty() && pattern.back() != L'\\' && pattern.back() != L'/') {
         pattern.push_back(L'\\');
@@ -296,9 +294,8 @@ int Lua_list(lua_State* L) {
         }
         const bool is_dir = (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
         const bool reparse = (data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
-        // A cloud placeholder is a reparse point and still a real folder.
-        // Only a junction or a symbolic link is skipped, because those can
-        // point back into the music folder and list the same songs forever.
+        // A shortcut back into a folder already listed would count the same
+        // songs forever. A normal folder is always listed.
         const bool link = reparse && (data.dwReserved0 == IO_REPARSE_TAG_MOUNT_POINT || data.dwReserved0 == IO_REPARSE_TAG_SYMLINK);
         std::wstring full = wide;
         if (!full.empty() && full.back() != L'\\' && full.back() != L'/') {
@@ -2127,18 +2124,7 @@ std::string patched_player_module(const std::string& module, std::string source)
         "\t\t\t\telse\n"
         "\t\t\t\t\tgroup.paths[#group.paths + 1] = track.path\n"
         "\t\t\t\tend\n"
-        "\t\t\t\t-- The first songs in an album often have no picture. Keep a\n"
-        "\t\t\t\t-- spread of later songs, and let the worker stop once it has a real cover.\n"
-        "\t\t\t\tif #group.paths > 24 then\n"
-        "\t\t\t\t\tif track.hasArt then\n"
-        "\t\t\t\t\t\tgroup.paths[#group.paths] = nil\n"
-        "\t\t\t\t\telse\n"
-        "\t\t\t\t\t\tlocal slot = 8 + ((group.spin or 0) % 16)\n"
-        "\t\t\t\t\t\tgroup.spin = (group.spin or 0) + 1\n"
-        "\t\t\t\t\t\tgroup.paths[slot] = group.paths[#group.paths]\n"
-        "\t\t\t\t\t\tgroup.paths[#group.paths] = nil\n"
-        "\t\t\t\t\tend\n"
-        "\t\t\t\tend\n"
+        "\t\t\t\t-- Every song in the album is checked until a picture is found.\n"
         "\t\t\tend\n";
     const std::string old_jobs_line = "\tlines[#lines + 1] = \"JOBS\"\n";
     const std::string new_jobs_line =
@@ -2168,7 +2154,7 @@ std::string patched_player_module(const std::string& module, std::string source)
             source.replace(source.find(old_group), old_group.size(), new_group);
             const size_t art_paths_at = source.find(old_art_paths);
             if (art_paths_at == std::string::npos) {
-                log_event(L"warn", L"lua", L"Regenerate Artwork still reads only the first three songs in an album, so a cover stored on a later song is missed.");
+                log_event(L"warn", L"lua", L"Regenerate Artwork still skips songs after the first few, so a picture stored in a later file is missed.");
             } else {
                 source.replace(art_paths_at, old_art_paths.size(), new_art_paths);
             }
@@ -2191,7 +2177,7 @@ std::string patched_player_module(const std::string& module, std::string source)
         "\t\tcontent = content:gsub(\"%$side = Find%-Sidecar %$audioPath %$roots\", \"if ($audioPath -match '(?i)\\\\.musiclibrary\\\\\\\\|\\\\\\\\DoomNet Art\\\\\\\\') { return $null }\\n\\t$side = Find-Sidecar $audioPath $roots\\n\\tif ($side -match '(?i)\\\\.musiclibrary\\\\\\\\|\\\\\\\\DoomNet Art\\\\\\\\') { $side = $null }\", 1)\n"
         "\t\tcontent = content:gsub(\"%$head = Read%-Bytes %$audioPath 16777216\", \"$head = Read-EmbeddedHead $audioPath\", 1)\n"
         "\t\tcontent = content:gsub(\"function Extract%-Art%(%[string%]%$audioPath, %[string%[%]]%$roots%) {\", [=[function Read-EmbeddedHead([string]$audioPath) {\n"
-        "\t$cap = 536870912\n"
+        "\t$cap = 2147483647\n"
         "\t$probe = Read-Bytes $audioPath 10\n"
         "\t$path = $audioPath\n"
         "\tif (-not $probe -or $probe.Length -lt 8) { return $probe }\n"
@@ -2271,10 +2257,55 @@ std::string patched_player_module(const std::string& module, std::string source)
         "\t\tcontent = content:gsub(\"if %(Write%-ArtJson %$out %$img%) { %$written%+%+ }\", \"if ($out -like '*.json') { if (Write-ArtJson $out $img) { $written++ } }\", 1)\n"
         "\t\tcontent = content:gsub(\"Write%-ProgressFile %$progressPath %(%$n %+ 1%) %$total %$written %$true\", \"if ($img -and $job.show -and -not (Test-Path -LiteralPath (Join-Path (Split-Path $JobDir -Parent) ('art_jpeg\\albums\\' + $job.show + '.custom')))) {\\n\\t\\t\\t\\t$ext = 'jpg'\\n\\t\\t\\t\\tif ($img.Length -ge 8 -and $img[0] -eq 0x89) { $ext = 'png' }\\n\\t\\t\\t\\t$shown = @()\\n\\t\\t\\t\\tif ($script:DoomNetSteamUi) { $shown += (Join-Path $script:DoomNetSteamUi ('steam-music-player\\art\\albums\\' + $job.show + '.' + $ext)) }\\n\\t\\t\\t\\t$shown += (Join-Path (Split-Path $JobDir -Parent) ('art_jpeg\\albums\\' + $job.show + '.' + $ext))\\n\\t\\t\\t\\tforeach ($destImg in $shown) {\\n\\t\\t\\t\\t\\t$dirImg = Split-Path -Parent $destImg\\n\\t\\t\\t\\t\\tif ($dirImg -and -not (Test-Path -LiteralPath $dirImg)) { New-Item -ItemType Directory -Path $dirImg -Force | Out-Null }\\n\\t\\t\\t\\t\\t[IO.File]::WriteAllBytes($destImg, $img)\\n\\t\\t\\t\\t}\\n\\t\\t\\t}\\n\\t\\t\\tWrite-ProgressFile $progressPath ($n + 1) $total $written $true\", 1)\n"
         "\t\tcontent = content:gsub(\"%$tail = Read%-Tail %$audioPath 8388608\", \"$tail = Read-Tail $audioPath 2097152\", 1)\n"
-        "\t\tcontent = content:gsub(\"function Be32\", \"function Test-RealCover([byte[]]$img) {\\n\\tif (-not $img -or $img.Length -lt 32) { return $false }\\n\\tif ($img[0] -eq 0xFF -and $img[1] -eq 0xD8 -and $img[2] -eq 0xFF) { return $true }\\n\\tif ($img.Length -ge 8 -and $img[0] -eq 0x89 -and $img[1] -eq 0x50 -and $img[2] -eq 0x4E -and $img[3] -eq 0x47) { return $true }\\n\\tif ($img.Length -ge 12 -and $img[0] -eq 0x52 -and $img[1] -eq 0x49 -and $img[2] -eq 0x46 -and $img[3] -eq 0x46 -and $img[8] -eq 0x57 -and $img[9] -eq 0x45 -and $img[10] -eq 0x42 -and $img[11] -eq 0x50) { return $true }\\n\\treturn $false\\n}\\nfunction Be32\", 1)\n"
+        "\t\tcontent = content:gsub(\"Extract%-Id3 %$head\", \"Read-AnyPicture $audioPath; if (-not (Test-RealCover $img)) { $img = Extract-Id3 $head }\", 1)\n"
+        "\t\tcontent = content:gsub(\"function Be32\", \"function Test-RealCover([byte[]]$img) {\\n\\tif (-not $img -or $img.Length -lt 32) { return $false }\\n\\tif ($img[0] -eq 0xFF -and $img[1] -eq 0xD8 -and $img[2] -eq 0xFF) { return $true }\\n\\tif ($img.Length -ge 8 -and $img[0] -eq 0x89 -and $img[1] -eq 0x50 -and $img[2] -eq 0x4E -and $img[3] -eq 0x47) { return $true }\\n\\tif ($img.Length -ge 12 -and $img[0] -eq 0x52 -and $img[1] -eq 0x49 -and $img[2] -eq 0x46 -and $img[3] -eq 0x46 -and $img[8] -eq 0x57 -and $img[9] -eq 0x45 -and $img[10] -eq 0x42 -and $img[11] -eq 0x50) { return $true }\\n\\treturn $false\\n}\\nfunction Read-AnyPicture([string]$path) {\\n\"\n"
+        "\t\"try {\\n\"\n"
+        "\t\"\\t$fs = [IO.File]::Open($path, 'Open', 'Read', 'ReadWrite')\\n\"\n"
+        "\t\"\\tif ($fs.Length -lt 16) { return $null }\\n\"\n"
+        "\t\"\\t$head = New-Object byte[] 10\\n\"\n"
+        "\t\"\\t[void]$fs.Read($head, 0, 10)\\n\"\n"
+        "\t\"\\tif ([Text.Encoding]::ASCII.GetString($head, 0, 3) -ne 'ID3') { return $null }\\n\"\n"
+        "\t\"\\t$ver = [int]$head[3]\\n\"\n"
+        "\t\"\\t$tagSize = (([int]$head[6] -band 0x7F) -shl 21) -bor (([int]$head[7] -band 0x7F) -shl 14) -bor (([int]$head[8] -band 0x7F) -shl 7) -bor ([int]$head[9] -band 0x7F)\\n\"\n"
+        "\t\"\\t$end = [Math]::Min([int64](10 + $tagSize), $fs.Length)\\n\"\n"
+        "\t\"\\t$pos = [int64]10\\n\"\n"
+        "\t\"\\t$best = $null\\n\"\n"
+        "\t\"\\t$ascii = [Text.Encoding]::ASCII\\n\"\n"
+        "\t\"\\twhile ($pos + 10 -le $end -and $ver -ge 3) {\\n\"\n"
+        "\t\"\\t\\t$fs.Position = $pos\\n\"\n"
+        "\t\"\\t\\t$hdr = New-Object byte[] 10\\n\"\n"
+        "\t\"\\t\\tif ($fs.Read($hdr, 0, 10) -lt 10) { break }\\n\"\n"
+        "\t\"\\t\\t$id = $ascii.GetString($hdr, 0, 4)\\n\"\n"
+        "\t\"\\t\\tif ($id -notmatch '^[A-Z0-9]{4}$') { break }\\n\"\n"
+        "\t\"\\t\\t$frameSize = if ($ver -ge 4) { (([int]$hdr[4] -band 0x7F) -shl 21) -bor (([int]$hdr[5] -band 0x7F) -shl 14) -bor (([int]$hdr[6] -band 0x7F) -shl 7) -bor ([int]$hdr[7] -band 0x7F) } else { ([int]$hdr[4] -shl 24) -bor ([int]$hdr[5] -shl 16) -bor ([int]$hdr[6] -shl 8) -bor [int]$hdr[7] }\\n\"\n"
+        "\t\"\\t\\tif ($frameSize -le 0) { break }\\n\"\n"
+        "\t\"\\t\\t$payloadAt = $pos + 10\\n\"\n"
+        "\t\"\\t\\tif ($id -eq 'APIC' -and $frameSize -ge 8 -and ($payloadAt + $frameSize) -le $fs.Length) {\\n\"\n"
+        "\t\"\\t\\t\\t$fs.Position = $payloadAt\\n\"\n"
+        "\t\"\\t\\t\\t$payload = New-Object byte[] $frameSize\\n\"\n"
+        "\t\"\\t\\t\\t[void]$fs.Read($payload, 0, $frameSize)\\n\"\n"
+        "\t\"\\t\\t\\t$start = 0\\n\"\n"
+        "\t\"\\t\\t\\t$limit = [Math]::Min($frameSize - 3, 65536)\\n\"\n"
+        "\t\"\\t\\t\\tfor ($n = 0; $n -lt $limit; $n++) {\\n\"\n"
+        "\t\"\\t\\t\\t\\tif ($payload[$n] -eq 0xFF -and $payload[$n+1] -eq 0xD8 -and $payload[$n+2] -eq 0xFF) { $start = $n; break }\\n\"\n"
+        "\t\"\\t\\t\\t\\tif ($payload[$n] -eq 0x89 -and $payload[$n+1] -eq 0x50 -and $payload[$n+2] -eq 0x4E -and $payload[$n+3] -eq 0x47) { $start = $n; break }\\n\"\n"
+        "\t\"\\t\\t\\t}\\n\"\n"
+        "\t\"\\t\\t\\t$len = $frameSize - $start\\n\"\n"
+        "\t\"\\t\\t\\tif ($len -ge 32) {\\n\"\n"
+        "\t\"\\t\\t\\t\\t$img = New-Object byte[] $len\\n\"\n"
+        "\t\"\\t\\t\\t\\t[Array]::Copy($payload, $start, $img, 0, $len)\\n\"\n"
+        "\t\"\\t\\t\\t\\tif (Test-RealCover $img) { if (-not $best -or $img.Length -gt $best.Length) { $best = $img } }\\n\"\n"
+        "\t\"\\t\\t\\t}\\n\"\n"
+        "\t\"\\t\\t}\\n\"\n"
+        "\t\"\\t\\t$pos = $payloadAt + $frameSize\\n\"\n"
+        "\t\"\\t}\\n\"\n"
+        "\t\"\\treturn $best\\n\"\n"
+        "\t\"} catch { return $null } finally { if ($fs) { $fs.Close() } }\\n\"\n"
+        "\t\"}\\n\"\n"
+        "\t\"function Be32\", 1)\n"
         "\t\tcontent = content:gsub(\"return %$img\", \"if (Test-RealCover $img) { return $img }\", 20)\n"
         "\t\tcontent = content:gsub(\"%$size %-ge 24 %-and %$size %-le 8MB\", \"$size -ge 24\", 1)\n"
-        "\t\tcontent = content:gsub(\"%$img = %$null%s+foreach %(%$src in %$job%.paths%) {%s+%$img = Extract%-Art %$src %$rootArr%s+if %(%$img%) { break }%s+}\", \"$img = $null\\n\\t\\t$bestCover = $null\\n\\t\\tforeach ($src in $job.paths) {\\n\\t\\t\\t$img = Extract-Art $src $rootArr\\n\\t\\t\\tif (-not (Test-RealCover $img)) { $img = $null }\\n\\t\\t\\tif ($img -and ((-not $bestCover) -or $img.Length -gt $bestCover.Length)) { $bestCover = $img }\\n\\t\\t\\tif ($bestCover -and $bestCover.Length -ge 50000) { break }\\n\\t\\t}\\n\\t\\t$img = $bestCover\", 1)\n"
+        "\t\tcontent = content:gsub(\"%$img = %$null%s+foreach %(%$src in %$job%.paths%) {%s+%$img = Extract%-Art %$src %$rootArr%s+if %(%$img%) { break }%s+}\", \"$img = $null\\n\\t\\t$bestCover = $null\\n\\t\\tforeach ($src in $job.paths) {\\n\\t\\t\\t$img = Extract-Art $src $rootArr\\n\\t\\t\\tif (-not (Test-RealCover $img)) { $img = $null }\\n\\t\\t\\tif ($img -and ((-not $bestCover) -or $img.Length -gt $bestCover.Length)) { $bestCover = $img }\\n\\t\\t\\tif ($bestCover -and $bestCover.Length -ge 200000) { break }\\n\\t\\t}\\n\\t\\t$img = $bestCover\", 1)\n"
         "\t\tcontent = content:gsub(\"if %(%$hits%.Count %-gt 0%) { return %$hits%[0]%.FullName }\", \"$bestImg = $hits | Sort-Object Length -Descending | Select-Object -First 1\\n\\t\\tif ($bestImg) { return $bestImg.FullName }\", 1)\n"
         "\t\tpcall(utils.write_file, dest, content)\n"
         "\tend\n";
@@ -2445,6 +2476,29 @@ std::string patched_player_module(const std::string& module, std::string source)
         }
     } else {
         source.replace(walk_ps_at, old_walk_ps.size(), new_walk_ps);
+    }
+    const std::string old_list_read = "read_scan_result_file(listJob.currentFolder, listJob.results, listJob.outPath)";
+    const std::string new_list_read =
+        "do local doomnetSeen = {} "
+        "for _, doomnetRoot in ipairs(listJob.folders or {}) do "
+        "read_scan_result_file(doomnetRoot, listJob.results, listJob.outPath) "
+        "doomnetSeen[path_key(doomnetRoot)] = true "
+        "end "
+        "if listJob.currentFolder and not doomnetSeen[path_key(listJob.currentFolder)] then "
+        "read_scan_result_file(listJob.currentFolder, listJob.results, listJob.outPath) "
+        "end end";
+    if (source.find(old_list_read) == std::string::npos) {
+        log_event(L"warn", L"lua", L"The finished folder listing is still matched against the last folder opened, so songs in the other folders are left out.");
+    } else {
+        size_t list_read_from = 0;
+        while (list_read_from < source.size()) {
+            const size_t found = source.find(old_list_read, list_read_from);
+            if (found == std::string::npos) {
+                break;
+            }
+            source.replace(found, old_list_read.size(), new_list_read);
+            list_read_from = found + new_list_read.size();
+        }
     }
     const std::string old_descend = "\t\t\t\t\t\t\tif (not dirOk) or isDir then\n";
     const std::string new_descend = "\t\t\t\t\t\t\tif dirOk and isDir and not (type(entry) == \"table\" and entry.is_symlink) then\n";
