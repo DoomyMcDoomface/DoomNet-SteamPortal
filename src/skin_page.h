@@ -32,6 +32,13 @@ bool skin_accent_for_theme(const std::string& theme, const std::string& custom, 
 // Grey, blue, and white values in the same file stay as they are.
 std::string recolor_skin_css(std::string css, const std::string& accent, const std::string& accent_dark);
 
+// Saves the SteamSkin color in the DoomNet data folder. It does not write the
+// music player's settings.json.
+bool save_skin_color(const std::string& theme, const std::string& custom, std::wstring& error);
+
+// "green", "custom|#112233", or empty when Configure has not chosen a color.
+std::string saved_skin_color_token();
+
 // Reads skin.json Patches and builds the window.__doomnetConfig statement.
 // Skips every TargetJs of music-player-inject.js. Does not add Millennium's
 // default patches when UseDefaultPatches is true. `player` inserts the player

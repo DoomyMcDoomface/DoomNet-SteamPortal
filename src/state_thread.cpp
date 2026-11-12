@@ -12,7 +12,9 @@
 #include "payload.h"
 #include "log.h"
 #include "paths.h"
+#include "skin_page.h"
 #include "state_thread.h"
+#include "steam_discover.h"
 #include "stream.h"
 #include "text.h"
 
@@ -213,6 +215,42 @@ int lua_doomnet_install_app(lua_State* L) {
     return 1;
 }
 
+int lua_doomnet_skin_color(lua_State* L) {
+    const std::string token = saved_skin_color_token();
+    lua_pushlstring(L, token.data(), token.size());
+    return 1;
+}
+
+int lua_doomnet_set_skin_color(lua_State* L) {
+    size_t theme_length = 0;
+    const char* theme = luaL_checklstring(L, 1, &theme_length);
+    size_t custom_length = 0;
+    const char* custom = luaL_optlstring(L, 2, "", &custom_length);
+    std::wstring error;
+    if (!save_skin_color(std::string(theme, theme_length), std::string(custom, custom_length), error)) {
+        const std::string text = wide_to_utf8(error);
+        lua_pushlstring(L, text.data(), text.size());
+        return 1;
+    }
+    const HostState& host = host_of(L);
+    std::wstring steam = host.config.steam_path;
+    if (steam.empty()) {
+        discover_steam_path(steam);
+    }
+    std::wstring root;
+    std::wstring root_error;
+    data_root(root, root_error);
+    const std::wstring skin_dir = launch_payload_dir(L"D:\\Documents\\Repos\\SteamSkin", root.empty() ? std::wstring() : root + L"\\skin", L"skin.json");
+    const SkinFileCopy copied = copy_skin_files(skin_dir, steam);
+    if (!copied.ok) {
+        const std::string text = wide_to_utf8(copied.detail);
+        lua_pushlstring(L, text.data(), text.size());
+        return 1;
+    }
+    lua_pushstring(L, "SteamSkin will use this color the next time Steam opens. The music player was left as it is.");
+    return 1;
+}
+
 }  // namespace
 
 bool can_park(lua_State* L) {
@@ -283,6 +321,10 @@ struct StateThread::Impl {
         install_host_searcher(L);
         lua_pushcfunction(L, lua_doomnet_install_app);
         lua_setglobal(L, "doomnet_install_app");
+        lua_pushcfunction(L, lua_doomnet_skin_color);
+        lua_setglobal(L, "doomnet_skin_color");
+        lua_pushcfunction(L, lua_doomnet_set_skin_color);
+        lua_setglobal(L, "doomnet_set_skin_color");
         lua_pushcfunction(L, lua_begin_update_check);
         lua_setglobal(L, "doomnet_begin_update_check");
         lua_pushcfunction(L, lua_update_check_result);

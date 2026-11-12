@@ -266,16 +266,79 @@ std::string recolor_skin_css(std::string css, const std::string& accent, const s
     return css;
 }
 
+bool save_skin_color(const std::string& theme, const std::string& custom, std::wstring& error) {
+    error.clear();
+    std::string accent;
+    std::string accent_dark;
+    if (!skin_accent_for_theme(theme, custom, accent, accent_dark)) {
+        error = L"SteamSkin was not recolored because '" + utf8_to_wide_lossy(theme) + L"' is not one of the music player's colors.";
+        log_event(L"error", L"inject", error.c_str());
+        return false;
+    }
+    std::wstring root;
+    if (!data_root(root, error) || root.empty()) {
+        error = error.empty() ? L"SteamSkin was not recolored because the DoomNet data folder is not available." : error;
+        log_event(L"error", L"inject", error.c_str());
+        return false;
+    }
+    std::string stored_custom = custom;
+    for (char& ch : stored_custom) {
+        if (ch >= 'A' && ch <= 'Z') {
+            ch = static_cast<char>(ch - 'A' + 'a');
+        }
+    }
+    if (theme != "custom") {
+        stored_custom.clear();
+    } else if (stored_custom.size() != 7) {
+        stored_custom = accent;
+    }
+    const std::string body = std::string("{\"theme\":\"") + theme + "\",\"custom\":\"" + stored_custom + "\"}\n";
+    const std::wstring path = root + L"\\skin-color.json";
+    if (!write_new_file(path, body.data(), body.size(), error)) {
+        return false;
+    }
+    log_event(L"info", L"inject", (L"Saved SteamSkin color '" + utf8_to_wide_lossy(accent) + L"' to '" + path + L"'. The music player's settings.json was not changed.").c_str());
+    return true;
+}
+
+std::string saved_skin_color_token() {
+    std::wstring root;
+    std::wstring error;
+    if (!data_root(root, error) || root.empty()) {
+        return {};
+    }
+    std::string json;
+    if (!read_entire_file(root + L"\\skin-color.json", json, error)) {
+        return {};
+    }
+    Json parsed;
+    std::string parse_error;
+    if (!json_parse(json, parsed, parse_error) || parsed.type != Json::Type::Object) {
+        return {};
+    }
+    const std::string theme = parsed.key_string("theme");
+    const std::string custom = parsed.key_string("custom");
+    std::string accent;
+    std::string accent_dark;
+    if (!skin_accent_for_theme(theme, custom, accent, accent_dark)) {
+        return {};
+    }
+    if (theme == "custom") {
+        return "custom|" + accent;
+    }
+    return theme;
+}
+
 namespace {
 
-bool player_skin_accent(std::string& accent, std::string& accent_dark) {
+bool saved_skin_accent(std::string& accent, std::string& accent_dark) {
     std::wstring root;
     std::wstring error;
     if (!data_root(root, error) || root.empty()) {
         return false;
     }
     std::string json;
-    if (!read_entire_file(root + L"\\player\\backend\\data\\settings.json", json, error)) {
+    if (!read_entire_file(root + L"\\skin-color.json", json, error)) {
         return false;
     }
     Json parsed;
@@ -283,7 +346,7 @@ bool player_skin_accent(std::string& accent, std::string& accent_dark) {
     if (!json_parse(json, parsed, parse_error) || parsed.type != Json::Type::Object) {
         return false;
     }
-    return skin_accent_for_theme(parsed.key_string("uiColorTheme"), parsed.key_string("uiCustomColor"), accent, accent_dark);
+    return skin_accent_for_theme(parsed.key_string("theme"), parsed.key_string("custom"), accent, accent_dark);
 }
 
 }  // namespace
@@ -405,7 +468,26 @@ SkinFileCopy copy_skin_files(const std::wstring& skin_dir, const std::wstring& s
         }
         const std::wstring from = skin_dir + L"\\" + name;
         const std::wstring to = result.destination + L"\\" + name;
-        if (!CopyFileW(from.c_str(), to.c_str(), FALSE)) {
+        std::string accent;
+        std::string accent_dark;
+        if (ends_with_ci(name, L".css") && saved_skin_accent(accent, accent_dark)) {
+            std::string css;
+            std::wstring read_error;
+            if (!read_entire_file(from, css, read_error)) {
+                FindClose(search);
+                result.detail = read_error.empty() ? L"Could not read '" + from + L"' before recoloring SteamSkin." : read_error;
+                log_event(L"error", L"payload", result.detail.c_str());
+                return result;
+            }
+            css = recolor_skin_css(std::move(css), accent, accent_dark);
+            std::wstring write_error;
+            if (!write_new_file(to, css.data(), css.size(), write_error)) {
+                FindClose(search);
+                result.detail = write_error.empty() ? L"Could not write the recolored SteamSkin file '" + to + L"'." : write_error;
+                log_event(L"error", L"payload", result.detail.c_str());
+                return result;
+            }
+        } else if (!CopyFileW(from.c_str(), to.c_str(), FALSE)) {
             FindClose(search);
             result.detail = L"Could not copy '" + from + L"' to '" + to + L"'. " + windows_error_text(GetLastError());
             log_event(L"error", L"payload", result.detail.c_str());
@@ -466,9 +548,9 @@ SkinPreamble load_skin_preamble(const std::wstring& skin_json, bool player) {
     int skipped_player = 0;
     std::string skin_accent;
     std::string skin_accent_dark;
-    const bool recolor_skin = player_skin_accent(skin_accent, skin_accent_dark);
+    const bool recolor_skin = saved_skin_accent(skin_accent, skin_accent_dark);
     if (recolor_skin) {
-        log_event(L"info", L"inject", (L"SteamSkin accent colors now use '" + utf8_to_wide_lossy(skin_accent) + L"' from the music player's saved color.").c_str());
+        log_event(L"info", L"inject", (L"SteamSkin accent colors now use '" + utf8_to_wide_lossy(skin_accent) + L"' from the saved SteamSkin color. The music player's color was not changed.").c_str());
     }
     for (const Json& patch : patches->a) {
         if (patch.type != Json::Type::Object) {
@@ -676,10 +758,10 @@ std::string patched_player_bootstrap_text() {
         return {};
     }
     const std::string old_rev = "var ASSET_REV = \"20261027-version-1.15.0\"";
-    const std::string new_rev = "var ASSET_REV = \"20261112-version-1.17.0-skin-color\"";
+    const std::string new_rev = "var ASSET_REV = \"20261112-version-1.17.1-skin-portal\"";
     const size_t at = text.find(old_rev);
     if (at == std::string::npos) {
-        if (text.find("20261112-version-1.17.0-skin-color") == std::string::npos) {
+        if (text.find("20261112-version-1.17.1-skin-portal") == std::string::npos) {
             log_event(L"warn", L"inject", L"The player loader still uses version 1.15.0, so Steam can keep showing the old page.");
         }
     } else {
@@ -703,7 +785,7 @@ std::string patched_player_ui_text() {
     }
     ui.swap(normalized);
     const std::string old_plugin_version = "var PLUGIN_VERSION = \"1.15.0\"";
-    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.17.0\"";
+    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.17.1\"";
     for (size_t at = 0; (at = ui.find(old_plugin_version, at)) != std::string::npos; at += new_plugin_version.size()) {
         ui.replace(at, old_plugin_version.size(), new_plugin_version);
     }
@@ -3689,7 +3771,7 @@ std::string patched_player_ui_text() {
 			}];
 			var page = el("div", "doomnet-store");
 			page.appendChild(el("div", "doomnet-store-title", { text: "Store" }));
-			page.appendChild(el("div", "doomnet-store-hint", { text: "Apps install beside the player. Configure matches SteamSkin to the music player's color." }));
+			page.appendChild(el("div", "doomnet-store-hint", { text: "Configure changes SteamSkin. The music player's own color stays as it is." }));
 			var update = el("button", "smp-btn doomnet-store-update", { type: "button", text: "Check for Updates" });
 			update.addEventListener("click", function () {
 				if (update.disabled) {
@@ -3963,30 +4045,26 @@ std::string patched_player_ui_text() {
         "\t\t\t\t\t\tvar panel = el(\"div\", \"doomnet-skin-appearance\");\n"
         "\t\t\t\t\t\tpanel.appendChild(el(\"div\", \"doomnet-store-name\", { text: \"Appearance\" }));\n"
         "\t\t\t\t\t\tvar choices = el(\"div\", \"smp-color-swatches\");\n"
-        "\t\t\t\t\t\tvar current = (App.settings && App.settings.uiColorTheme) || \"steam\";\n"
+        "\t\t\t\t\t\tvar current = \"\";\n"
+        "\t\t\t\t\t\tvar skinCustom = \"#b33232\";\n"
         "\t\t\t\t\t\tvar options = [\n"
         "\t\t\t\t\t\t\t{ value: \"steam\", label: \"Steam Blue\", color: \"#66c0f4\" },\n"
         "\t\t\t\t\t\t\t{ value: \"red\", label: \"Red\", color: \"#b33232\" },\n"
         "\t\t\t\t\t\t\t{ value: \"blue\", label: \"Blue\", color: \"#3d8bfd\" },\n"
         "\t\t\t\t\t\t\t{ value: \"green\", label: \"Green\", color: \"#3d9b4a\" },\n"
-        "\t\t\t\t\t\t\t{ value: \"custom\", label: \"Custom\", color: (App.settings && App.settings.uiCustomColor) || \"#b33232\" },\n"
+        "\t\t\t\t\t\t\t{ value: \"custom\", label: \"Custom\", color: \"#b33232\" },\n"
         "\t\t\t\t\t\t];\n"
         "\t\t\t\t\t\tfunction applyTheme(theme, hex) {\n"
-        "\t\t\t\t\t\t\tif (!App.settings) {\n"
-        "\t\t\t\t\t\t\t\tApp.settings = {};\n"
+        "\t\t\t\t\t\t\tvar call = window.Millennium && window.Millennium.callServerMethod;\n"
+        "\t\t\t\t\t\t\tif (typeof call !== \"function\") {\n"
+        "\t\t\t\t\t\t\t\tUI.showToast(\"SteamSkin could not be recolored because the page is not connected to DoomNet.\", 8000);\n"
+        "\t\t\t\t\t\t\t\treturn;\n"
         "\t\t\t\t\t\t\t}\n"
-        "\t\t\t\t\t\t\tApp.settings.uiColorTheme = theme;\n"
-        "\t\t\t\t\t\t\tif (theme === \"custom\" && hex) {\n"
-        "\t\t\t\t\t\t\t\tApp.settings.uiCustomColor = hex;\n"
-        "\t\t\t\t\t\t\t}\n"
-        "\t\t\t\t\t\t\tUI.commitSetting(\"uiColorTheme\", theme, false);\n"
-        "\t\t\t\t\t\t\tif (theme === \"custom\" && hex) {\n"
-        "\t\t\t\t\t\t\t\tUI.commitSetting(\"uiCustomColor\", hex, false);\n"
-        "\t\t\t\t\t\t\t}\n"
-        "\t\t\t\t\t\t\tif (UI.applyAppearanceSettings) {\n"
-        "\t\t\t\t\t\t\t\tUI.applyAppearanceSettings();\n"
-        "\t\t\t\t\t\t\t}\n"
-        "\t\t\t\t\t\t\tUI.showToast(\"The music player is using this color. Open Steam again so SteamSkin matches.\", 8000);\n"
+        "\t\t\t\t\t\t\tcall(\"SteamMusicPlayer\", \"doomnet_set_skin_color\", [theme, hex || \"\"]).then(function (message) {\n"
+        "\t\t\t\t\t\t\t\tUI.showToast(String(message || \"SteamSkin will use this color the next time Steam opens. The music player was left as it is.\"), 8000);\n"
+        "\t\t\t\t\t\t\t}, function (error) {\n"
+        "\t\t\t\t\t\t\t\tUI.showToast(String((error && error.message) || error || \"SteamSkin was not recolored.\"), 8000);\n"
+        "\t\t\t\t\t\t\t});\n"
         "\t\t\t\t\t\t}\n"
         "\t\t\t\t\t\toptions.forEach(function (option) {\n"
         "\t\t\t\t\t\t\tvar swatch = el(\"button\", \"smp-color-swatch\" + (current === option.value ? \" active\" : \"\"), {\n"
@@ -4003,7 +4081,7 @@ std::string patched_player_ui_text() {
         "\t\t\t\t\t\t\t}\n"
         "\t\t\t\t\t\t\tswatch.appendChild(el(\"span\", \"smp-color-swatch-label\", { text: option.label }));\n"
         "\t\t\t\t\t\t\tswatch.addEventListener(\"click\", function () {\n"
-        "\t\t\t\t\t\t\t\tvar customHex = (App.settings && App.settings.uiCustomColor) || \"#b33232\";\n"
+        "\t\t\t\t\t\t\t\tvar customHex = skinCustom || \"#b33232\";\n"
         "\t\t\t\t\t\t\t\tapplyTheme(option.value, option.value === \"custom\" ? customHex : \"\");\n"
         "\t\t\t\t\t\t\t\tvar nodes = choices.querySelectorAll(\".smp-color-swatch\");\n"
         "\t\t\t\t\t\t\t\tfor (var i = 0; i < nodes.length; i++) {\n"
@@ -4024,7 +4102,7 @@ std::string patched_player_ui_text() {
         "\t\t\t\t\t\tvar customRow = el(\"div\", \"doomnet-skin-custom\");\n"
         "\t\t\t\t\t\tcustomRow.hidden = current !== \"custom\";\n"
         "\t\t\t\t\t\tvar picker = el(\"input\", \"smp-color-picker\", { type: \"color\" });\n"
-        "\t\t\t\t\t\tvar hex = String((App.settings && App.settings.uiCustomColor) || \"#b33232\").toLowerCase();\n"
+        "\t\t\t\t\t\tvar hex = String(skinCustom || \"#b33232\").toLowerCase();\n"
         "\t\t\t\t\t\tif (!/^#[0-9a-f]{6}$/.test(hex)) {\n"
         "\t\t\t\t\t\t\thex = \"#b33232\";\n"
         "\t\t\t\t\t\t}\n"
@@ -4035,9 +4113,30 @@ std::string patched_player_ui_text() {
         "\t\t\t\t\t\tcustomRow.appendChild(picker);\n"
         "\t\t\t\t\t\tpanel.appendChild(customRow);\n"
         "\t\t\t\t\t\tpanel.appendChild(el(\"div\", \"smp-hint\", {\n"
-        "\t\t\t\t\t\t\ttext: \"These are the same colors as the music player. The player changes now. SteamSkin changes the next time Steam opens.\",\n"
+        "\t\t\t\t\t\t\ttext: \"This changes the red highlights in Steam, not the music player. Steam uses the new color the next time it opens.\",\n"
         "\t\t\t\t\t\t}));\n"
         "\t\t\t\t\t\tpage.insertBefore(panel, row.nextSibling);\n"
+        "\t\t\t\t\t\tvar savedCall = window.Millennium && window.Millennium.callServerMethod;\n"
+        "\t\t\t\t\t\tif (typeof savedCall === \"function\") {\n"
+        "\t\t\t\t\t\t\tsavedCall(\"SteamMusicPlayer\", \"doomnet_skin_color\", []).then(function (token) {\n"
+        "\t\t\t\t\t\t\t\ttoken = String(token || \"\");\n"
+        "\t\t\t\t\t\t\t\tvar savedTheme = token.split(\"|\")[0];\n"
+        "\t\t\t\t\t\t\t\tif (token.indexOf(\"|\") >= 0) {\n"
+        "\t\t\t\t\t\t\t\t\tskinCustom = token.split(\"|\").slice(1).join(\"|\");\n"
+        "\t\t\t\t\t\t\t\t\tpicker.value = skinCustom;\n"
+        "\t\t\t\t\t\t\t\t}\n"
+        "\t\t\t\t\t\t\t\tvar nodes = choices.querySelectorAll(\".smp-color-swatch\");\n"
+        "\t\t\t\t\t\t\t\tfor (var i = 0; i < nodes.length; i++) {\n"
+        "\t\t\t\t\t\t\t\t\tvar match = options[i] && options[i].value === savedTheme;\n"
+        "\t\t\t\t\t\t\t\t\tif (match) {\n"
+        "\t\t\t\t\t\t\t\t\t\tnodes[i].classList.add(\"active\");\n"
+        "\t\t\t\t\t\t\t\t\t} else {\n"
+        "\t\t\t\t\t\t\t\t\t\tnodes[i].classList.remove(\"active\");\n"
+        "\t\t\t\t\t\t\t\t\t}\n"
+        "\t\t\t\t\t\t\t\t}\n"
+        "\t\t\t\t\t\t\t\tcustomRow.hidden = savedTheme !== \"custom\";\n"
+        "\t\t\t\t\t\t\t});\n"
+        "\t\t\t\t\t\t}\n"
         "\t\t\t\t\t});\n"
         "\t\t\t\t\tactions.appendChild(configure);\n"
         "\t\t\t\t\trow.appendChild(actions);\n";
