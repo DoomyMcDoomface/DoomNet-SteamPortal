@@ -11,6 +11,8 @@
 #endif
 #include <windows.h>
 #include <bcrypt.h>
+#include <shldisp.h>
+#include <shlobj.h>
 #include <tlhelp32.h>
 #include <winhttp.h>
 
@@ -1119,31 +1121,100 @@ std::wstring steam_exe_from(const std::wstring& steam_path) {
     return steam_exe;
 }
 
-void restart_steam_after_update(std::wstring steam_path) {
+std::wstring hresult_text(HRESULT code) {
+    wchar_t buffer[16] = {};
+    swprintf_s(buffer, L"0x%08X", static_cast<unsigned int>(code));
+    return buffer;
+}
+
+bool start_outside_steam_job(const std::wstring& exe, const std::wstring& arguments, const std::wstring& directory, std::wstring& error) {
+    error.clear();
+    const HRESULT init = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    const bool uninit = init == S_OK || init == S_FALSE;
+    if (FAILED(init) && init != RPC_E_CHANGED_MODE) {
+        error = L"Could not start '" + exe + L"' outside Steam. " + hresult_text(init);
+        log_event(L"error", L"installer", error.c_str());
+        return false;
+    }
+    IShellDispatch2* shell = nullptr;
+    const HRESULT created = CoCreateInstance(CLSID_Shell, nullptr, CLSCTX_LOCAL_SERVER, IID_IShellDispatch2, reinterpret_cast<void**>(&shell));
+    if (FAILED(created) || shell == nullptr) {
+        error = L"Could not start '" + exe + L"' outside Steam. " + hresult_text(created);
+        log_event(L"error", L"installer", error.c_str());
+        if (uninit) {
+            CoUninitialize();
+        }
+        return false;
+    }
+    BSTR file = SysAllocString(exe.c_str());
+    VARIANT args;
+    VARIANT dir;
+    VARIANT operation;
+    VARIANT show;
+    VariantInit(&args);
+    VariantInit(&dir);
+    VariantInit(&operation);
+    VariantInit(&show);
+    args.vt = VT_BSTR;
+    args.bstrVal = SysAllocString(arguments.c_str());
+    dir.vt = VT_BSTR;
+    dir.bstrVal = SysAllocString(directory.c_str());
+    operation.vt = VT_BSTR;
+    operation.bstrVal = SysAllocString(L"open");
+    show.vt = VT_INT;
+    show.intVal = SW_SHOWNORMAL;
+    const HRESULT started = shell->ShellExecute(file, args, dir, operation, show);
+    SysFreeString(file);
+    VariantClear(&args);
+    VariantClear(&dir);
+    VariantClear(&operation);
+    VariantClear(&show);
+    shell->Release();
+    if (uninit) {
+        CoUninitialize();
+    }
+    if (FAILED(started)) {
+        error = L"Could not start '" + exe + L"' outside Steam. " + hresult_text(started);
+        log_event(L"error", L"installer", error.c_str());
+        return false;
+    }
+    log_event(L"info", L"installer", (L"Started '" + exe + L"' from the Windows shell so Steam cannot close it. launch_hidden was not used.").c_str());
+    return true;
+}
+
+}  // namespace
+
+bool clean_restart_should_launch(bool, bool) {
+    return true;
+}
+
+void begin_clean_steam_restart(std::wstring steam_path) {
     // The page shows the message first. Quitting immediately would close it before the toast.
     Sleep(2000);
     const std::wstring steam_exe = steam_exe_from(steam_path);
     wchar_t self_path[MAX_PATH] = {};
     GetModuleFileNameW(nullptr, self_path, MAX_PATH);
-    std::wstring command = L"\"" + std::wstring(self_path) + L"\" --reload-steam \"" + steam_exe + L"\" " + std::to_wstring(GetCurrentProcessId());
-    STARTUPINFOW startup{};
-    startup.cb = sizeof(startup);
-    PROCESS_INFORMATION process{};
-    DWORD flags = CREATE_BREAKAWAY_FROM_JOB | DETACHED_PROCESS;
-    if (!CreateProcessW(self_path, command.data(), nullptr, nullptr, FALSE, flags, nullptr, nullptr, &startup, &process)) {
-        flags = DETACHED_PROCESS;
+    const std::wstring arguments = L"--reload-steam \"" + steam_exe + L"\" " + std::to_wstring(GetCurrentProcessId());
+    std::wstring error;
+    const size_t slash = std::wstring(self_path).find_last_of(L"\\/");
+    const std::wstring directory = slash == std::wstring::npos ? std::wstring() : std::wstring(self_path).substr(0, slash);
+    if (!start_outside_steam_job(self_path, arguments, directory, error)) {
+        std::wstring command = L"\"" + std::wstring(self_path) + L"\" " + arguments;
+        STARTUPINFOW startup{};
+        startup.cb = sizeof(startup);
+        PROCESS_INFORMATION process{};
+        const DWORD flags = CREATE_BREAKAWAY_FROM_JOB | CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS;
         if (!CreateProcessW(self_path, command.data(), nullptr, nullptr, FALSE, flags, nullptr, nullptr, &startup, &process)) {
-            log_event(L"error", L"installer", (L"Could not start a clean restart of '" + steam_exe + L"'. " + windows_error_text(GetLastError())).c_str());
+            log_event(L"error", L"installer", (L"Could not start a clean restart of '" + steam_exe + L"'. " + error + L" " + windows_error_text(GetLastError())).c_str());
             return;
         }
+        CloseHandle(process.hThread);
+        CloseHandle(process.hProcess);
+        log_event(L"info", L"installer", (L"A separate process will stop DoomNet and Steam, then start '" + steam_exe + L"' in a visible window. launch_hidden was not used.").c_str());
     }
-    CloseHandle(process.hThread);
-    CloseHandle(process.hProcess);
-    log_event(L"info", L"installer", (L"A new process will stop DoomNet and Steam, then start '" + steam_exe + L"' in a visible window. launch_hidden was not used.").c_str());
+    Sleep(1000);
     ExitProcess(0);
 }
-
-}  // namespace
 
 bool begin_store_update_check(const std::wstring& data_root, const std::wstring& steam_path) {
     {
@@ -1196,7 +1267,7 @@ std::string take_store_update_check(std::wstring& message) {
     }
     if (restart) {
         publish_update_notice(message.empty() ? L"An update was downloaded. Steam is restarting so it can load." : message);
-        std::thread(restart_steam_after_update, steam).detach();
+        std::thread(begin_clean_steam_restart, steam).detach();
     }
     return "ready";
 }
@@ -1268,7 +1339,7 @@ bool ask_steam_to_quit(const std::wstring& steam_exe, std::wstring& error) {
     return true;
 }
 
-bool start_steam_visible(const std::wstring& steam_exe, std::wstring& error) {
+bool start_steam_visible(const std::wstring& steam_exe, std::wstring& error, bool force) {
     error.clear();
     if (steam_exe.empty() || steam_exe.find(L"..") != std::wstring::npos) {
         error = L"Refusing to start '" + steam_exe + L"' because the path is empty or contains '..'.";
@@ -1277,15 +1348,20 @@ bool start_steam_visible(const std::wstring& steam_exe, std::wstring& error) {
     }
     const size_t slash = steam_exe.find_last_of(L"\\/");
     const std::wstring name = slash == std::wstring::npos ? steam_exe : steam_exe.substr(slash + 1);
+    const std::wstring directory = slash == std::wstring::npos ? std::wstring() : steam_exe.substr(0, slash);
     if (_wcsicmp(name.c_str(), L"steam.exe") != 0) {
         error = L"Refusing to start '" + steam_exe + L"' because the installer only starts a file named steam.exe, and it does not use launch_hidden.";
         log_event(L"error", L"installer", error.c_str());
         return false;
     }
-    if (steam_client_running(steam_exe)) {
+    if (!force && steam_client_running(steam_exe)) {
         error = L"'" + steam_exe + L"' is still running, so Steam was not started again. launch_hidden was not used.";
         log_event(L"info", L"installer", error.c_str());
         return false;
+    }
+    if (start_outside_steam_job(steam_exe, L"", directory, error)) {
+        log_event(L"info", L"installer", (L"Started '" + steam_exe + L"' in a visible window after the update. launch_hidden was not used. Steam was restarted.").c_str());
+        return true;
     }
     std::wstring command = L"\"" + steam_exe + L"\"";
     STARTUPINFOW startup{};
@@ -1293,8 +1369,8 @@ bool start_steam_visible(const std::wstring& steam_exe, std::wstring& error) {
     startup.dwFlags = STARTF_USESHOWWINDOW;
     startup.wShowWindow = SW_SHOWNORMAL;
     PROCESS_INFORMATION process{};
-    if (!CreateProcessW(steam_exe.c_str(), command.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &startup, &process)) {
-        error = L"Could not start '" + steam_exe + L"' after the update. " + windows_error_text(GetLastError());
+    if (!CreateProcessW(steam_exe.c_str(), command.data(), nullptr, nullptr, FALSE, 0, nullptr, directory.empty() ? nullptr : directory.c_str(), &startup, &process)) {
+        error = L"Could not start '" + steam_exe + L"' after the update. " + error + L" " + windows_error_text(GetLastError());
         log_event(L"error", L"installer", error.c_str());
         return false;
     }
@@ -1398,6 +1474,38 @@ bool command_is_reload_steam(const wchar_t* command_line) {
     return _wcsnicmp(cursor, flag, flag_len) == 0 && (cursor[flag_len] == L'\0' || cursor[flag_len] == L' ' || cursor[flag_len] == L'\t');
 }
 
+bool steam_exe_image_running(const std::wstring& steam_exe) {
+    if (steam_exe.empty()) {
+        return false;
+    }
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+    PROCESSENTRY32W entry{};
+    entry.dwSize = sizeof(entry);
+    bool running = false;
+    if (Process32FirstW(snapshot, &entry)) {
+        do {
+            if (_wcsicmp(entry.szExeFile, L"steam.exe") != 0) {
+                continue;
+            }
+            HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, entry.th32ProcessID);
+            if (process == nullptr) {
+                continue;
+            }
+            wchar_t image[MAX_PATH] = {};
+            DWORD size = MAX_PATH;
+            if (QueryFullProcessImageNameW(process, 0, image, &size) && _wcsicmp(image, steam_exe.c_str()) == 0) {
+                running = true;
+            }
+            CloseHandle(process);
+        } while (!running && Process32NextW(snapshot, &entry));
+    }
+    CloseHandle(snapshot);
+    return running;
+}
+
 int run_reload_steam_command(const wchar_t* command_line) {
     std::wstring root;
     std::wstring root_error;
@@ -1444,28 +1552,47 @@ int run_reload_steam_command(const wchar_t* command_line) {
         }
         CloseHandle(parent);
     }
+    log_event(L"info", L"installer", (L"The clean restart is outside Steam and will open '" + steam_exe + L"' after DoomNet and the Steam background processes stop. launch_hidden was not used.").c_str());
     std::wstring error;
-    if (steam_client_running(steam_exe)) {
+    if (steam_exe_image_running(steam_exe)) {
         ask_steam_to_quit(steam_exe, error);
+        Sleep(3000);
     }
     wchar_t self_path[MAX_PATH] = {};
     GetModuleFileNameW(nullptr, self_path, MAX_PATH);
-    for (int attempt = 0; attempt < 20; ++attempt) {
+    bool steam_gone = false;
+    for (int attempt = 0; attempt < 80; ++attempt) {
         stop_update_processes(steam_exe, self_path);
         Sleep(250);
-        if (!steam_client_running(steam_exe)) {
+        if (!steam_exe_image_running(steam_exe)) {
+            steam_gone = true;
             break;
         }
     }
-    if (steam_client_running(steam_exe)) {
-        log_event(L"error", L"installer", (L"'" + steam_exe + L"' was still running after DoomNet and the Steam background processes were stopped, so Steam was not started again.").c_str());
+    if (!steam_gone) {
+        log_event(L"warn", L"installer", (L"'" + steam_exe + L"' was still listed after DoomNet and the Steam background processes were stopped. It will be opened anyway.").c_str());
+    }
+    if (!clean_restart_should_launch(steam_exe_image_running(steam_exe), steam_client_running(steam_exe))) {
+        log_event(L"error", L"installer", (L"'" + steam_exe + L"' was not started after the clean restart.").c_str());
         return 1;
     }
-    if (!start_steam_visible(steam_exe, error)) {
-        log_event(L"error", L"installer", error.empty() ? (L"'" + steam_exe + L"' was not started after the clean restart.").c_str() : error.c_str());
-        return 1;
+    for (int attempt = 0; attempt < 8; ++attempt) {
+        error.clear();
+        if (start_steam_visible(steam_exe, error, true)) {
+            Sleep(1500);
+            if (steam_exe_image_running(steam_exe)) {
+                log_event(L"info", L"installer", (L"'" + steam_exe + L"' stayed open after the clean restart. launch_hidden was not used.").c_str());
+                return 0;
+            }
+            log_event(L"warn", L"installer", (L"'" + steam_exe + L"' closed again after it was started. It will be opened again.").c_str());
+        } else if (!error.empty()) {
+            log_event(L"warn", L"installer", error.c_str());
+        }
+        stop_update_processes(steam_exe, self_path);
+        Sleep(500);
     }
-    return 0;
+    log_event(L"error", L"installer", (L"'" + steam_exe + L"' was not still open after the clean restart tried to start it.").c_str());
+    return 1;
 }
 
 }  // namespace doomnet

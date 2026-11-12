@@ -74,7 +74,7 @@
 
     var pending = {};
     var nextId = 1000000;
-    var BOOTSTRAP_URL = "https://steamloopback.host/steam-music-player/bootstrap.js?v=20261112-version-1.16.3-clean-restart";
+    var BOOTSTRAP_URL = "https://steamloopback.host/steam-music-player/bootstrap.js?v=20261112-version-1.16.4-reopen-steam";
 
     function rejectNow(message) {
         return Promise.reject(new Error(message));

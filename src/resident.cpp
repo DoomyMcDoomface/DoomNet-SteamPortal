@@ -509,7 +509,6 @@ void run_resident(StartupMode mode, const std::wstring& root, const std::wstring
 
     ULONGLONG update_checked = GetTickCount64();
     bool restart_pending = false;
-    bool quit_sent = false;
 
     for (;;) {
         if (host_up) {
@@ -553,7 +552,6 @@ void run_resident(StartupMode mode, const std::wstring& root, const std::wstring
             const InstallResult installed = install_store_skin(store);
             if (installed.ok) {
                 restart_pending = true;
-                quit_sent = false;
             }
         }
         if (restart_pending) {
@@ -570,17 +568,8 @@ void run_resident(StartupMode mode, const std::wstring& root, const std::wstring
                 }
                 steam_exe += L"steam.exe";
             }
-            std::wstring restart_error;
-            if (steam_client_running(steam_exe)) {
-                if (!quit_sent) {
-                    ask_steam_to_quit(steam_exe, restart_error);
-                    quit_sent = true;
-                }
-            } else if (start_steam_visible(steam_exe, restart_error)) {
-                restart_pending = false;
-            } else {
-                restart_pending = false;
-            }
+            begin_clean_steam_restart(steam_exe);
+            restart_pending = false;
         }
     }
 

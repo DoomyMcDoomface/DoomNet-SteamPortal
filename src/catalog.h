@@ -47,6 +47,13 @@ bool update_restart_stops_image(const std::wstring& steam_folder, const std::wst
 bool command_is_reload_steam(const wchar_t* command_line);
 int run_reload_steam_command(const wchar_t* command_line);
 
+// A leftover steam.exe or steamwebhelper must not cancel the reopen. Check for
+// Updates kills those processes and then starts steam.exe anyway.
+bool clean_restart_should_launch(bool steam_exe_still_listed, bool helper_still_listed);
+
+// Starts a process Steam cannot close, then leaves. The page toast has already been shown.
+void begin_clean_steam_restart(std::wstring steam_path);
+
 std::string sha256_hex(const void* data, size_t size);
 bool sha256_file(const std::wstring& path, std::string& hex, std::wstring& error);
 
@@ -96,7 +103,8 @@ bool steam_client_running(const std::wstring& steam_exe);
 bool ask_steam_to_quit(const std::wstring& steam_exe, std::wstring& error);
 
 // Starts `steam_exe` in a visible window. The file name must be steam.exe.
-// A running copy of that same file is left alone. launch_hidden is not called.
-bool start_steam_visible(const std::wstring& steam_exe, std::wstring& error);
+// When `force` is false, a running copy is left alone. When `force` is true, this
+// still starts it so a clean restart cannot leave Steam closed. launch_hidden is not called.
+bool start_steam_visible(const std::wstring& steam_exe, std::wstring& error, bool force = false);
 
 }  // namespace doomnet
