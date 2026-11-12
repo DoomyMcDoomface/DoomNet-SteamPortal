@@ -8,6 +8,7 @@
 #include "anchors.h"
 #include "catalog.h"
 #include "folder_pick.h"
+#include "playlist_dialog.h"
 #include "host_internal.h"
 #include "payload.h"
 #include "log.h"
@@ -27,6 +28,7 @@
 #include <atomic>
 #include <memory>
 #include <string>
+#include <vector>
 #include <thread>
 #include <unordered_map>
 
@@ -215,6 +217,97 @@ int lua_doomnet_install_app(lua_State* L) {
     return 1;
 }
 
+int lua_begin_playlist_save(lua_State* L) {
+    size_t length = 0;
+    const char* name = luaL_optlstring(L, 1, "playlist", &length);
+    lua_pushboolean(L, begin_playlist_save(utf8_to_wide_lossy(std::string(name, length))) ? 1 : 0);
+    return 1;
+}
+
+int lua_begin_playlist_open(lua_State* L) {
+    lua_pushboolean(L, begin_playlist_open() ? 1 : 0);
+    return 1;
+}
+
+int lua_playlist_dialog_result(lua_State* L) {
+    std::wstring path;
+    std::wstring error;
+    const std::string status = playlist_dialog_take(path, error);
+    lua_pushlstring(L, status.data(), status.size());
+    if (status == "path") {
+        const std::string utf8 = wide_to_utf8(path);
+        lua_pushlstring(L, utf8.data(), utf8.size());
+    } else if (status == "failed") {
+        const std::string utf8 = wide_to_utf8(error);
+        lua_pushlstring(L, utf8.data(), utf8.size());
+    } else {
+        lua_pushliteral(L, "");
+    }
+    return 2;
+}
+
+int lua_playlist_m3u(lua_State* L) {
+    std::vector<PlaylistSong> songs;
+    if (lua_istable(L, 1)) {
+        const lua_Integer count = luaL_len(L, 1);
+        for (lua_Integer i = 1; i <= count; ++i) {
+            lua_rawgeti(L, 1, static_cast<int>(i));
+            if (lua_istable(L, -1)) {
+                lua_getfield(L, -1, "label");
+                lua_getfield(L, -2, "path");
+                PlaylistSong song;
+                size_t label_length = 0;
+                size_t path_length = 0;
+                const char* label = lua_tolstring(L, -2, &label_length);
+                const char* path = lua_tolstring(L, -1, &path_length);
+                if (label != nullptr) {
+                    song.label.assign(label, label_length);
+                }
+                if (path != nullptr) {
+                    song.path.assign(path, path_length);
+                }
+                if (!song.path.empty()) {
+                    songs.push_back(song);
+                }
+                lua_pop(L, 2);
+            }
+            lua_pop(L, 1);
+        }
+    }
+    const std::string text = playlist_m3u(songs);
+    lua_pushlstring(L, text.data(), text.size());
+    return 1;
+}
+
+int lua_resolve_playlist_entry(lua_State* L) {
+    size_t playlist_length = 0;
+    size_t entry_length = 0;
+    const char* playlist = luaL_checklstring(L, 1, &playlist_length);
+    const char* entry = luaL_checklstring(L, 2, &entry_length);
+    const std::string resolved = resolve_playlist_entry(std::string(playlist, playlist_length), std::string(entry, entry_length));
+    if (resolved.empty()) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushlstring(L, resolved.data(), resolved.size());
+    return 1;
+}
+
+int lua_write_playlist_file(lua_State* L) {
+    size_t path_length = 0;
+    size_t body_length = 0;
+    const char* path_bytes = luaL_checklstring(L, 1, &path_length);
+    const char* body = luaL_checklstring(L, 2, &body_length);
+    std::wstring path;
+    std::wstring error;
+    if (!lua_path_to_wide(path_bytes, path_length, path) || !write_playlist_file(path, std::string(body, body_length), error)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
 int lua_doomnet_skin_color(lua_State* L) {
     const std::string token = saved_skin_color_token();
     lua_pushlstring(L, token.data(), token.size());
@@ -337,6 +430,18 @@ struct StateThread::Impl {
         lua_setglobal(L, "doomnet_folder_pick_result");
         lua_pushcfunction(L, lua_stream_hook);
         lua_setglobal(L, "doomnet_stream_hook");
+        lua_pushcfunction(L, lua_begin_playlist_save);
+        lua_setglobal(L, "doomnet_begin_playlist_save");
+        lua_pushcfunction(L, lua_begin_playlist_open);
+        lua_setglobal(L, "doomnet_begin_playlist_open");
+        lua_pushcfunction(L, lua_playlist_dialog_result);
+        lua_setglobal(L, "doomnet_playlist_dialog_result");
+        lua_pushcfunction(L, lua_playlist_m3u);
+        lua_setglobal(L, "doomnet_playlist_m3u");
+        lua_pushcfunction(L, lua_resolve_playlist_entry);
+        lua_setglobal(L, "doomnet_resolve_playlist_entry");
+        lua_pushcfunction(L, lua_write_playlist_file);
+        lua_setglobal(L, "doomnet_write_playlist_file");
 
         // require finds the player's modules next to main.lua, and nowhere else.
         std::string search = host.backend_dir_utf8 + "\\?.lua";
@@ -365,6 +470,12 @@ struct StateThread::Impl {
         if (luaL_dostring(L, kUpdateCheckSource) != LUA_OK) {
             const char* message = lua_tostring(L, -1);
             error = std::string("The update check failed to load: ") + (message != nullptr ? message : "?");
+            lua_pop(L, 1);
+            return false;
+        }
+        if (luaL_dostring(L, playlist_io_script()) != LUA_OK) {
+            const char* message = lua_tostring(L, -1);
+            error = std::string("Playlist import and export failed to load: ") + (message != nullptr ? message : "?");
             lua_pop(L, 1);
             return false;
         }

@@ -98,6 +98,7 @@ set(DOOMNET_CORE
     src/streamtunes_identity.cpp
     src/host_fs.cpp
     src/folder_pick.cpp
+    src/playlist_dialog.cpp
     src/host_io.cpp
     src/process_job.cpp
     src/text.cpp

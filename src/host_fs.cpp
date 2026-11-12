@@ -2403,6 +2403,32 @@ std::string patched_player_module(const std::string& module, std::string source)
     } else {
         source.replace(done_folder_at, old_done_folder.size(), new_done_folder);
     }
+    const std::string old_track_lookup = "function library.get_track(id)\n";
+    const std::string new_track_lookup =
+        "function library.id_for_path(path)\n"
+        "\tif type(path) ~= \"string\" or path == \"\" then\n"
+        "\t\treturn nil\n"
+        "\tend\n"
+        "\tlocal direct = state.tracksByPath[path]\n"
+        "\tif direct and direct.id ~= nil then\n"
+        "\t\treturn direct.id\n"
+        "\tend\n"
+        "\tlocal key = path_key(path)\n"
+        "\tfor stored, track in pairs(state.tracksByPath) do\n"
+        "\t\tif path_key(stored) == key and track and track.id ~= nil then\n"
+        "\t\t\treturn track.id\n"
+        "\t\tend\n"
+        "\tend\n"
+        "\treturn nil\n"
+        "end\n"
+        "\n"
+        "function library.get_track(id)\n";
+    const size_t track_lookup_at = source.find(old_track_lookup);
+    if (track_lookup_at == std::string::npos) {
+        log_event(L"warn", L"lua", L"The library has no path lookup, so a playlist file cannot be matched to songs already in the library.");
+    } else {
+        source.replace(track_lookup_at, old_track_lookup.size(), new_track_lookup);
+    }
     return source;
 }
 

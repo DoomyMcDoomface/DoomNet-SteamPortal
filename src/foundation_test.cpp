@@ -12,6 +12,7 @@
 #include "paths.h"
 #include "resident.h"
 #include "page_bridge.h"
+#include "playlist_dialog.h"
 #include "payload.h"
 #include "pipe_session.h"
 #include "shortcut.h"
@@ -1189,7 +1190,7 @@ void test_skin_page() {
     check(boot.find("stableSince") != std::string::npos, "boot script no longer waits for the library grid to finish its first pass");
     check(boot.find("wantsPlayer") != std::string::npos, "boot script no longer inserts the player on the Steam window");
     check(boot.find("win.__doomnetStore = window.__doomnetStore") != std::string::npos, "the Steam window does not receive the Store record, so an installed skin is shown as not installed");
-    check(boot.find("20261112-version-1.17.1-skin-portal") != std::string::npos && boot.find("20261027-version-1.15.0") == std::string::npos, "Steam still loads the player as version 1.15.0");
+    check(boot.find("20261112-version-1.18.0-playlist-files") != std::string::npos && boot.find("20261027-version-1.15.0") == std::string::npos, "Steam still loads the player as version 1.15.0");
     check(boot.find("win.__doomnetPartyConfig = window.__doomnetPartyConfig") != std::string::npos && boot.find("win.DoomNetStreamTunes = window.DoomNetStreamTunes") != std::string::npos, "the Steam window does not receive StreamTunes, so the listening-party button never appears");
     check(boot.find("doomnet-steamtunes-tab") != std::string::npos, "boot script does not add a SteamTunes tab");
     check(boot.find("row.appendChild(tab)") != std::string::npos, "the SteamTunes tab is not placed after the account name");
@@ -1290,7 +1291,7 @@ void test_skin_page() {
               patched_ui.find("Leave the current party before starting one") != std::string::npos &&
               patched_ui.find("startHost && UI.doomnetListenerParty()") != std::string::npos,
           "a listener session does not replace Now Playing or restore the local player on Leave Session");
-    check(patched_ui.find("var PLUGIN_VERSION = \"1.17.1\"") != std::string::npos && patched_ui.find("var PLUGIN_VERSION = \"1.15.0\"") == std::string::npos && patched_ui.find("Start Listening Party") != std::string::npos && patched_ui.find("tagCount") != std::string::npos, "the About version is still 1.17.0, or it does not include the listening party or the scan");
+    check(patched_ui.find("var PLUGIN_VERSION = \"1.18.0\"") != std::string::npos && patched_ui.find("var PLUGIN_VERSION = \"1.15.0\"") == std::string::npos && patched_ui.find("Start Listening Party") != std::string::npos && patched_ui.find("tagCount") != std::string::npos, "the About version is still 1.17.1, or it does not include the listening party or the scan");
     {
         const std::string stock_sync =
             "local function sync_assets_to_steamui()\n"
@@ -1303,7 +1304,7 @@ void test_skin_page() {
         const size_t closed = kept.find("end");
         check(stop_copy != std::string::npos && guarded != std::string::npos && returned != std::string::npos && closed != std::string::npos && copy_again != std::string::npos && stop_copy < guarded && guarded < returned && returned < closed && closed < copy_again, "the player still copies version 1.15.0 over the 1.16.0 page");
     }
-    check(doomnet::patched_player_bootstrap_text().find("var ASSET_REV = \"20261112-version-1.17.1-skin-portal\"") != std::string::npos && doomnet::patched_player_bootstrap_text().find("20261027-version-1.15.0") == std::string::npos, "the player files are still cached as version 1.15.0");
+    check(doomnet::patched_player_bootstrap_text().find("var ASSET_REV = \"20261112-version-1.18.0-playlist-files\"") != std::string::npos && doomnet::patched_player_bootstrap_text().find("20261027-version-1.15.0") == std::string::npos, "the player files are still cached as version 1.15.0");
     check(patched_ui.find("settingsTabList.push({ key: \"store\", label: \"Store\" })") != std::string::npos &&
               patched_ui.find("UI.doomnetRenderStore(view)") != std::string::npos &&
               patched_ui.find("doomnet_install_app") != std::string::npos &&
@@ -1463,6 +1464,28 @@ void test_skin_page() {
         }
     }
     check(patched_ui.find("doomnetConfirmPlaylist") != std::string::npos && patched_ui.find("The playlist file stays where it is.") != std::string::npos && patched_ui.find("dismiss_playlist") != std::string::npos && patched_ui.find("text: playlist.sourcePath ? \"Remove\" : \"Delete\"") != std::string::npos, "a playlist read from a file has no confirmation before it is removed from the player");
+    {
+        const size_t export_at = patched_ui.find("row.appendChild(exportBtn);");
+        const size_t delete_at = patched_ui.find("row.appendChild(deleteBtn);", export_at == std::string::npos ? 0 : export_at);
+        check(patched_ui.find("text: \"Export Playlist\"") != std::string::npos && patched_ui.find("callServer(\"export_playlist\"") != std::string::npos && export_at != std::string::npos && delete_at != std::string::npos && export_at < delete_at, "a playlist cannot be saved as a file another player can open");
+        check(patched_ui.find("text: \"Import\"") != std::string::npos && patched_ui.find("callServer(\"import_playlist\"") != std::string::npos && patched_ui.find("smp-playlist-create-actions") != std::string::npos, "a playlist file cannot be chosen by hand");
+        check(doomnet::patched_player_css_text().find("#doomnet-steamtunes-host .smp-playlist-name-input{flex:0 1 50%;width:50%;max-width:50%;}") != std::string::npos && doomnet::patched_player_css_text().find("#doomnet-steamtunes-host .smp-playlist-create-actions{margin-left:auto;") != std::string::npos, "the new playlist name still stretches across the row");
+        const std::string script = doomnet::playlist_io_script();
+        check(script.find("function export_playlist") != std::string::npos && script.find("function import_playlist") != std::string::npos && script.find("playlist_file.read_all") != std::string::npos && script.find("library.id_for_path") != std::string::npos, "import and export are not wired to the playlist file reader");
+        check(doomnet::patched_player_module("library", "function library.get_track(id)\n").find("function library.id_for_path(path)") != std::string::npos, "a chosen playlist file cannot be matched to songs already in the library");
+        const std::wstring filter = doomnet::playlist_open_filter();
+        check(filter.find(L"*.m3u8") != std::wstring::npos && filter.find(L"*.pls") != std::wstring::npos && filter.find(L"*.xspf") != std::wstring::npos && filter.find(L"*.wpl") != std::wstring::npos && filter.find(L"*.asx") != std::wstring::npos && filter.find(L"*.mpcpl") != std::wstring::npos && filter.find(L"*.aimppl") != std::wstring::npos && filter.find(L"*.plist") != std::wstring::npos, "the playlist file window leaves out common playlist types");
+        check(doomnet::playlist_file_name(L"Cool: Mix") == L"Cool Mix.m3u" && doomnet::playlist_file_name(L"") == L"playlist.m3u" && doomnet::playlist_file_name(L"already.m3u8") == L"already.m3u8", "a playlist name is not turned into an m3u file name");
+        check(doomnet::resolve_playlist_entry("D:\\Music\\lists\\a.m3u", "..\\rock\\song.mp3") == "D:\\Music\\rock\\song.mp3" && doomnet::resolve_playlist_entry("D:\\Music\\lists\\a.m3u", "D:/Album/song.mp3") == "D:\\Album\\song.mp3", "a song path inside a playlist file is not joined to that file's folder");
+        const std::string m3u = doomnet::playlist_m3u({{"Artist - Title\r\n", "D:/Music/a.mp3"}, {"", "D:\\Music\\b.mp3"}});
+        check(m3u.find("\xEF\xBB\xBF#EXTM3U\r\n") == 0 && m3u.find("#EXTINF:-1,Artist - Title\r\nD:\\Music\\a.mp3\r\n") != std::string::npos && m3u.find("#EXTINF:-1,b.mp3\r\nD:\\Music\\b.mp3\r\n") != std::string::npos, "the exported playlist is not an m3u another player can open");
+        const std::wstring saved = temp_dir() + L"\\Cool Mix.m3u";
+        std::wstring write_error;
+        check(doomnet::write_playlist_file(saved, m3u, write_error), "the playlist file was not written");
+        std::string written;
+        check(doomnet::read_entire_file(saved, written, write_error) && written == m3u, "the playlist file on disk is not the m3u that was saved");
+        check(!doomnet::write_playlist_file(temp_dir() + L"\\..\\escape.m3u", m3u, write_error) && write_error.find(L"..") != std::wstring::npos, "a playlist path containing .. was saved");
+    }
     check(patched_ui.find("doomnetMovePlaylistTrack") != std::string::npos && patched_ui.find("title: \"Move Up\"") != std::string::npos && patched_ui.find("title: \"Move Down\"") != std::string::npos && patched_ui.find("doomnetFinishPlaylistDrag") != std::string::npos && patched_ui.find("doomnetKeepPlaylistScroll") != std::string::npos, "a playlist you created cannot be reordered without jumping to the top");
     check(std::string(doomnet::player_compat_lua()).find("entry_path = entry_path or function(dir, entry)") != std::string::npos, "the library scan stops on the first folder, so albums saved without tags are never read");
     check(patched_ui.find("reader.readAsArrayBuffer(file)") != std::string::npos && patched_ui.find("callServer(\"begin_display_art\"") != std::string::npos && patched_ui.find("callServer(\"finish_display_art\"") != std::string::npos && patched_ui.find("App.coverPreview[pinnedAlbum]") != std::string::npos, "Set Cover still depends on a file path and the old picture can paint back over the one you chose");

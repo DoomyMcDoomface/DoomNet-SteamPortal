@@ -758,10 +758,10 @@ std::string patched_player_bootstrap_text() {
         return {};
     }
     const std::string old_rev = "var ASSET_REV = \"20261027-version-1.15.0\"";
-    const std::string new_rev = "var ASSET_REV = \"20261112-version-1.17.1-skin-portal\"";
+    const std::string new_rev = "var ASSET_REV = \"20261112-version-1.18.0-playlist-files\"";
     const size_t at = text.find(old_rev);
     if (at == std::string::npos) {
-        if (text.find("20261112-version-1.17.1-skin-portal") == std::string::npos) {
+        if (text.find("20261112-version-1.18.0-playlist-files") == std::string::npos) {
             log_event(L"warn", L"inject", L"The player loader still uses version 1.15.0, so Steam can keep showing the old page.");
         }
     } else {
@@ -785,7 +785,7 @@ std::string patched_player_ui_text() {
     }
     ui.swap(normalized);
     const std::string old_plugin_version = "var PLUGIN_VERSION = \"1.15.0\"";
-    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.17.1\"";
+    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.18.0\"";
     for (size_t at = 0; (at = ui.find(old_plugin_version, at)) != std::string::npos; at += new_plugin_version.size()) {
         ui.replace(at, old_plugin_version.size(), new_plugin_version);
     }
@@ -3056,6 +3056,21 @@ std::string patched_player_ui_text() {
         "\t\t\t\t\trow.appendChild(deleteBtn);\n"
         "\t\t\t\t}\n";
     const std::string new_playlist_delete =
+        "\t\t\t\tvar exportBtn = el(\"button\", \"smp-btn-small\", { type: \"button\", text: \"Export Playlist\" });\n"
+        "\t\t\t\texportBtn.addEventListener(\"click\", function (event) {\n"
+        "\t\t\t\t\tevent.preventDefault();\n"
+        "\t\t\t\t\tevent.stopPropagation();\n"
+        "\t\t\t\t\texportBtn.disabled = true;\n"
+        "\t\t\t\t\tcallServer(\"export_playlist\", [playlist.id]).then(function (message) {\n"
+        "\t\t\t\t\t\texportBtn.disabled = false;\n"
+        "\t\t\t\t\t\tif (message) {\n"
+        "\t\t\t\t\t\t\tUI.showToast(String(message), 8000);\n"
+        "\t\t\t\t\t\t}\n"
+        "\t\t\t\t\t}).catch(function () {\n"
+        "\t\t\t\t\t\texportBtn.disabled = false;\n"
+        "\t\t\t\t\t\tUI.showToast(\"The playlist could not be exported.\", 8000);\n"
+        "\t\t\t\t\t});\n"
+        "\t\t\t\t});\n"
         "\t\t\t\tvar deleteBtn = el(\"button\", \"smp-btn-small smp-btn-danger\", { type: \"button\", text: playlist.sourcePath ? \"Remove\" : \"Delete\" });\n"
         "\t\t\t\tdeleteBtn.addEventListener(\"click\", function (event) {\n"
         "\t\t\t\t\tevent.preventDefault();\n"
@@ -3070,12 +3085,75 @@ std::string patched_player_ui_text() {
         "\t\t\t\trow.appendChild(playBtn);\n"
         "\t\t\t\trow.appendChild(playNextBtn);\n"
         "\t\t\t\trow.appendChild(queueBtn);\n"
+        "\t\t\t\trow.appendChild(exportBtn);\n"
         "\t\t\t\trow.appendChild(deleteBtn);\n";
     const size_t playlist_delete_at = ui.find(old_playlist_delete);
     if (playlist_delete_at != std::string::npos) {
         ui.replace(playlist_delete_at, old_playlist_delete.size(), new_playlist_delete);
     } else {
         log_event(L"warn", L"inject", L"The player UI did not offer Remove on a playlist that came from a file, so that list stays in the player.");
+    }
+    const std::string old_playlist_create =
+        "\t\t\tvar button = el(\"button\", \"smp-btn\", { text: \"Create\" });\n"
+        "\t\t\tbutton.addEventListener(\"click\", function () {\n"
+        "\t\t\t\tif (!input.value.trim()) {\n"
+        "\t\t\t\t\treturn;\n"
+        "\t\t\t\t}\n"
+        "\t\t\t\tcallServer(\"create_playlist\", [input.value.trim()]).then(function () {\n"
+        "\t\t\t\t\treturn callServer(\"get_playlists\");\n"
+        "\t\t\t\t}).then(function (playlists) {\n"
+        "\t\t\t\t\tApp.playlists = asArray(playlists);\n"
+        "\t\t\t\t\tUI.safely(\"renderLibrary\", UI.renderLibrary);\n"
+        "\t\t\t\t});\n"
+        "\t\t\t\tinput.value = \"\";\n"
+        "\t\t\t});\n"
+        "\t\t\tcreateRow.appendChild(input);\n"
+        "\t\t\tcreateRow.appendChild(button);\n";
+    const std::string new_playlist_create =
+        "\t\t\tvar actions = el(\"div\", \"smp-playlist-create-actions\");\n"
+        "\t\t\tvar importBtn = el(\"button\", \"smp-btn\", { type: \"button\", text: \"Import\" });\n"
+        "\t\t\timportBtn.addEventListener(\"click\", function (event) {\n"
+        "\t\t\t\tevent.preventDefault();\n"
+        "\t\t\t\timportBtn.disabled = true;\n"
+        "\t\t\t\tcallServer(\"import_playlist\").then(function (message) {\n"
+        "\t\t\t\t\timportBtn.disabled = false;\n"
+        "\t\t\t\t\tif (message) {\n"
+        "\t\t\t\t\t\tUI.showToast(String(message), 8000);\n"
+        "\t\t\t\t\t}\n"
+        "\t\t\t\t\treturn callServer(\"get_playlists\");\n"
+        "\t\t\t\t}).then(function (playlists) {\n"
+        "\t\t\t\t\tif (!playlists) {\n"
+        "\t\t\t\t\t\treturn;\n"
+        "\t\t\t\t\t}\n"
+        "\t\t\t\t\tApp.playlists = asArray(playlists);\n"
+        "\t\t\t\t\tUI.safely(\"renderLibrary\", UI.renderLibrary);\n"
+        "\t\t\t\t}).catch(function () {\n"
+        "\t\t\t\t\timportBtn.disabled = false;\n"
+        "\t\t\t\t\tUI.showToast(\"The playlist could not be imported.\", 8000);\n"
+        "\t\t\t\t});\n"
+        "\t\t\t});\n"
+        "\t\t\tvar button = el(\"button\", \"smp-btn\", { type: \"button\", text: \"Create\" });\n"
+        "\t\t\tbutton.addEventListener(\"click\", function () {\n"
+        "\t\t\t\tif (!input.value.trim()) {\n"
+        "\t\t\t\t\treturn;\n"
+        "\t\t\t\t}\n"
+        "\t\t\t\tcallServer(\"create_playlist\", [input.value.trim()]).then(function () {\n"
+        "\t\t\t\t\treturn callServer(\"get_playlists\");\n"
+        "\t\t\t\t}).then(function (playlists) {\n"
+        "\t\t\t\t\tApp.playlists = asArray(playlists);\n"
+        "\t\t\t\t\tUI.safely(\"renderLibrary\", UI.renderLibrary);\n"
+        "\t\t\t\t});\n"
+        "\t\t\t\tinput.value = \"\";\n"
+        "\t\t\t});\n"
+        "\t\t\tcreateRow.appendChild(input);\n"
+        "\t\t\tactions.appendChild(importBtn);\n"
+        "\t\t\tactions.appendChild(button);\n"
+        "\t\t\tcreateRow.appendChild(actions);\n";
+    const size_t playlist_create_at = ui.find(old_playlist_create);
+    if (playlist_create_at != std::string::npos) {
+        ui.replace(playlist_create_at, old_playlist_create.size(), new_playlist_create);
+    } else {
+        log_event(L"warn", L"inject", L"The playlist page did not add Import beside Create, so a playlist file cannot be chosen by hand.");
     }
     const std::string old_render_playlists =
         "\t\trenderPlaylists: function (view) {\n"
@@ -5089,7 +5167,10 @@ std::string patched_player_css_text() {
         ".doomnet-playlist-menu-item.added:hover{background:transparent;}\n"
         ".doomnet-playlist-row[draggable=\"true\"]{cursor:grab;}\n"
         ".doomnet-playlist-row.dragging{cursor:grabbing;}\n"
-        "button.smp-playlist-name{background:transparent;border:0;color:inherit;font:inherit;text-align:left;cursor:pointer;padding:0;}\n";
+        "button.smp-playlist-name{background:transparent;border:0;color:inherit;font:inherit;text-align:left;cursor:pointer;padding:0;}\n"
+        "#doomnet-steamtunes-host .smp-playlist-create{display:flex;align-items:center;gap:8px;}\n"
+        "#doomnet-steamtunes-host .smp-playlist-name-input{flex:0 1 50%;width:50%;max-width:50%;}\n"
+        "#doomnet-steamtunes-host .smp-playlist-create-actions{margin-left:auto;display:flex;align-items:center;gap:8px;flex:0 0 auto;}\n";
     return css;
 }
 
