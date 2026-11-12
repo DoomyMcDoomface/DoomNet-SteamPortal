@@ -38,6 +38,15 @@ UpdatePlan updates_needed(const ReleaseManifest& manifest, const InstalledVersio
 // True when the file on disk was written after the running copy started.
 bool host_file_is_newer_than_this_process(const std::wstring& exe_path);
 
+// True for DoomNet.exe at the installed path, or a Steam client process under
+// `steam_folder`. Games under steamapps, System32, and this process are left alone.
+bool update_restart_stops_image(const std::wstring& steam_folder, const std::wstring& image_path, const std::wstring& host_exe, unsigned long pid, unsigned long self_pid);
+
+// `--reload-steam` runs before the single-instance check. It does not start Steam
+// until the previous DoomNet.exe has exited.
+bool command_is_reload_steam(const wchar_t* command_line);
+int run_reload_steam_command(const wchar_t* command_line);
+
 std::string sha256_hex(const void* data, size_t size);
 bool sha256_file(const std::wstring& path, std::string& hex, std::wstring& error);
 

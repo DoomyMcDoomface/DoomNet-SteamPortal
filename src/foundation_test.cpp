@@ -197,6 +197,16 @@ void test_update_gate() {
         CloseHandle(stale_file);
     }
     check(doomnet::host_file_is_newer_than_this_process(stale_exe), "a host file written after startup was treated as the copy already running");
+    check(doomnet::command_is_reload_steam(L"--reload-steam \"C:\\Program Files (x86)\\Steam\\steam.exe\" 42"), "the clean restart command was not recognized");
+    check(!doomnet::command_is_reload_steam(L"--install"), "install was treated as the clean restart");
+    const std::wstring steam_folder = L"C:\\Program Files (x86)\\Steam";
+    const std::wstring host_exe = L"C:\\Users\\Tester\\AppData\\Local\\DoomNet\\DoomNet.exe";
+    check(doomnet::update_restart_stops_image(steam_folder, steam_folder + L"\\steam.exe", host_exe, 10, 1), "steam.exe was left running");
+    check(doomnet::update_restart_stops_image(steam_folder, steam_folder + L"\\bin\\cef\\steamwebhelper.exe", host_exe, 11, 1), "steamwebhelper.exe was left running");
+    check(doomnet::update_restart_stops_image(steam_folder, host_exe, host_exe, 12, 1), "the old DoomNet.exe was left running");
+    check(!doomnet::update_restart_stops_image(steam_folder, host_exe, host_exe, 1, 1), "the restart process was told to stop itself");
+    check(!doomnet::update_restart_stops_image(steam_folder, steam_folder + L"\\steamapps\\common\\Game\\game.exe", host_exe, 13, 1), "a game was treated as a Steam background process");
+    check(!doomnet::update_restart_stops_image(steam_folder, L"C:\\Windows\\System32\\steam.exe", host_exe, 14, 1), "a System32 process was allowed to be stopped");
     check(!doomnet::host_file_is_newer_than_this_process(L"C:\\Users\\Tester\\AppData\\Local\\DoomNet\\missing-host.exe"), "a missing host file was treated as a newer copy");
     check(doomnet::updates_should_run(L"C:\\Users\\Tester\\AppData\\Local\\DoomNet\\DoomNet.exe", L"C:\\Users\\Tester\\AppData\\Local\\DoomNet", true), "a tester install with updates on was blocked");
     doomnet::publish_update_notice(L"A new version is available. It's downloading now.");
@@ -1144,7 +1154,7 @@ void test_skin_page() {
     check(boot.find("stableSince") != std::string::npos, "boot script no longer waits for the library grid to finish its first pass");
     check(boot.find("wantsPlayer") != std::string::npos, "boot script no longer inserts the player on the Steam window");
     check(boot.find("win.__doomnetStore = window.__doomnetStore") != std::string::npos, "the Steam window does not receive the Store record, so an installed skin is shown as not installed");
-    check(boot.find("20261112-version-1.16.2-reload") != std::string::npos && boot.find("20261027-version-1.15.0") == std::string::npos, "Steam still loads the player as version 1.15.0");
+    check(boot.find("20261112-version-1.16.3-clean-restart") != std::string::npos && boot.find("20261027-version-1.15.0") == std::string::npos, "Steam still loads the player as version 1.15.0");
     check(boot.find("win.__doomnetPartyConfig = window.__doomnetPartyConfig") != std::string::npos && boot.find("win.DoomNetStreamTunes = window.DoomNetStreamTunes") != std::string::npos, "the Steam window does not receive StreamTunes, so the listening-party button never appears");
     check(boot.find("doomnet-steamtunes-tab") != std::string::npos, "boot script does not add a SteamTunes tab");
     check(boot.find("row.appendChild(tab)") != std::string::npos, "the SteamTunes tab is not placed after the account name");
@@ -1245,7 +1255,7 @@ void test_skin_page() {
               patched_ui.find("Leave the current party before starting one") != std::string::npos &&
               patched_ui.find("startHost && UI.doomnetListenerParty()") != std::string::npos,
           "a listener session does not replace Now Playing or restore the local player on Leave Session");
-    check(patched_ui.find("var PLUGIN_VERSION = \"1.16.2\"") != std::string::npos && patched_ui.find("var PLUGIN_VERSION = \"1.15.0\"") == std::string::npos && patched_ui.find("Start Listening Party") != std::string::npos && patched_ui.find("tagCount") != std::string::npos, "the About version is still 1.16.1, or it does not include the listening party or the scan");
+    check(patched_ui.find("var PLUGIN_VERSION = \"1.16.3\"") != std::string::npos && patched_ui.find("var PLUGIN_VERSION = \"1.15.0\"") == std::string::npos && patched_ui.find("Start Listening Party") != std::string::npos && patched_ui.find("tagCount") != std::string::npos, "the About version is still 1.16.2, or it does not include the listening party or the scan");
     {
         const std::string stock_sync =
             "local function sync_assets_to_steamui()\n"
@@ -1258,7 +1268,7 @@ void test_skin_page() {
         const size_t closed = kept.find("end");
         check(stop_copy != std::string::npos && guarded != std::string::npos && returned != std::string::npos && closed != std::string::npos && copy_again != std::string::npos && stop_copy < guarded && guarded < returned && returned < closed && closed < copy_again, "the player still copies version 1.15.0 over the 1.16.0 page");
     }
-    check(doomnet::patched_player_bootstrap_text().find("var ASSET_REV = \"20261112-version-1.16.2-reload\"") != std::string::npos && doomnet::patched_player_bootstrap_text().find("20261027-version-1.15.0") == std::string::npos, "the player files are still cached as version 1.15.0");
+    check(doomnet::patched_player_bootstrap_text().find("var ASSET_REV = \"20261112-version-1.16.3-clean-restart\"") != std::string::npos && doomnet::patched_player_bootstrap_text().find("20261027-version-1.15.0") == std::string::npos, "the player files are still cached as version 1.15.0");
     check(patched_ui.find("settingsTabList.push({ key: \"store\", label: \"Store\" })") != std::string::npos &&
               patched_ui.find("UI.doomnetRenderStore(view)") != std::string::npos &&
               patched_ui.find("doomnet_install_app") != std::string::npos &&

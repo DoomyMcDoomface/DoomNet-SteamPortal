@@ -12,6 +12,7 @@
 // Every step writes one sentence to logs\doomnet.log.
 
 #include "anchors.h"
+#include "catalog.h"
 #include "config.h"
 #include "installer.h"
 #include "instance.h"
@@ -82,6 +83,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR command_line, int) {
 
     std::wstring root;
     std::wstring root_error;
+    if (doomnet::command_is_reload_steam(command_line)) {
+        return doomnet::run_reload_steam_command(command_line);
+    }
     if (doomnet::command_is_hook(command_line)) {
         const doomnet::InstallResult hooked = doomnet::run_hook_command(command_line);
         return hooked.ok ? 0 : 1;
