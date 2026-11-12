@@ -886,10 +886,10 @@ std::string patched_player_bootstrap_text() {
         return {};
     }
     const std::string old_rev = "var ASSET_REV = \"20261027-version-1.15.0\"";
-    const std::string new_rev = "var ASSET_REV = \"20261112-version-1.18.2-playing-row\"";
+    const std::string new_rev = "var ASSET_REV = \"20261112-version-1.19.0-refresh-metadata\"";
     const size_t at = text.find(old_rev);
     if (at == std::string::npos) {
-        if (text.find("20261112-version-1.18.2-playing-row") == std::string::npos) {
+        if (text.find("20261112-version-1.19.0-refresh-metadata") == std::string::npos) {
             log_event(L"warn", L"inject", L"The player loader still uses version 1.15.0, so Steam can keep showing the old page.");
         }
     } else {
@@ -913,7 +913,7 @@ std::string patched_player_ui_text() {
     }
     ui.swap(normalized);
     const std::string old_plugin_version = "var PLUGIN_VERSION = \"1.15.0\"";
-    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.18.2\"";
+    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.19.0\"";
     for (size_t at = 0; (at = ui.find(old_plugin_version, at)) != std::string::npos; at += new_plugin_version.size()) {
         ui.replace(at, old_plugin_version.size(), new_plugin_version);
     }
@@ -4930,7 +4930,62 @@ std::string patched_player_ui_text() {
         "\t\t\t\t\ttext: \"This reads the picture stored inside songs already in the library. It does not scan the library again, and it does not read the rest of the song.\",\n"
         "\t\t\t\t})\n"
         "\t\t\t);\n"
-        "\t\t\tsection.appendChild(artStatus);\n";
+        "\t\t\tsection.appendChild(artStatus);\n"
+        "\t\t\tvar metaStatus = el(\"div\", \"smp-hint\");\n"
+        "\t\t\tvar metaBtn = el(\"button\", \"smp-btn\", { type: \"button\", text: \"Refresh Metadata\" });\n"
+        "\t\t\tmetaBtn.addEventListener(\"click\", function () {\n"
+        "\t\t\t\tif (metaBtn.disabled) {\n"
+        "\t\t\t\t\treturn;\n"
+        "\t\t\t\t}\n"
+        "\t\t\t\tmetaBtn.disabled = true;\n"
+        "\t\t\t\tmetaBtn.textContent = \"Refreshing Metadata...\";\n"
+        "\t\t\t\tmetaStatus.textContent = \"Reading tags for songs already in the library.\";\n"
+        "\t\t\t\tvar failed = function () {\n"
+        "\t\t\t\t\tmetaBtn.disabled = false;\n"
+        "\t\t\t\t\tmetaBtn.textContent = \"Refresh Metadata\";\n"
+        "\t\t\t\t\tmetaStatus.textContent = \"The tags could not be read. The library was not changed.\";\n"
+        "\t\t\t\t};\n"
+        "\t\t\t\tvar step = function () {\n"
+        "\t\t\t\t\treturn callServer(\"refresh_metadata_batch\", [UI.SCAN_BATCH_SIZE]).then(function (info) {\n"
+        "\t\t\t\t\t\tinfo = info || {};\n"
+        "\t\t\t\t\t\tif (info.ok === false) {\n"
+        "\t\t\t\t\t\t\tfailed();\n"
+        "\t\t\t\t\t\t\treturn;\n"
+        "\t\t\t\t\t\t}\n"
+        "\t\t\t\t\t\tvar doneCount = info.doneCount || 0;\n"
+        "\t\t\t\t\t\tvar total = info.total || 0;\n"
+        "\t\t\t\t\t\tmetaBtn.textContent = \"Refreshing Metadata... \" + doneCount + \" / \" + total;\n"
+        "\t\t\t\t\t\tmetaStatus.textContent = \"Updating tags \" + doneCount + \" / \" + total + \".\";\n"
+        "\t\t\t\t\t\tif (info.done) {\n"
+        "\t\t\t\t\t\t\tmetaBtn.disabled = false;\n"
+        "\t\t\t\t\t\t\tmetaBtn.textContent = \"Refresh Metadata\";\n"
+        "\t\t\t\t\t\t\tmetaStatus.textContent = \"Updated \" + (info.updated || 0) + \" songs. \" + (info.missing || 0) + \" were left as they are.\";\n"
+        "\t\t\t\t\t\t\tif (typeof UI.refreshLibraryFromServer === \"function\") {\n"
+        "\t\t\t\t\t\t\t\tUI.refreshLibraryFromServer();\n"
+        "\t\t\t\t\t\t\t}\n"
+        "\t\t\t\t\t\t\treturn;\n"
+        "\t\t\t\t\t\t}\n"
+        "\t\t\t\t\t\treturn new Promise(function (resolve) {\n"
+        "\t\t\t\t\t\t\tsetTimeout(resolve, UI.SCAN_BATCH_DELAY_MS);\n"
+        "\t\t\t\t\t\t}).then(step);\n"
+        "\t\t\t\t\t}).catch(failed);\n"
+        "\t\t\t\t};\n"
+        "\t\t\t\tcallServer(\"refresh_metadata_start\").then(function (info) {\n"
+        "\t\t\t\t\tinfo = info || {};\n"
+        "\t\t\t\t\tif (info.ok === false) {\n"
+        "\t\t\t\t\t\tfailed();\n"
+        "\t\t\t\t\t\treturn;\n"
+        "\t\t\t\t\t}\n"
+        "\t\t\t\t\treturn step();\n"
+        "\t\t\t\t}).catch(failed);\n"
+        "\t\t\t});\n"
+        "\t\t\tsection.appendChild(metaBtn);\n"
+        "\t\t\tsection.appendChild(\n"
+        "\t\t\t\tel(\"div\", \"smp-hint\", {\n"
+        "\t\t\t\t\ttext: \"This updates the title, artist, album, genre, year, and track number from the files already in the library. It does not remove songs, and it does not rebuild covers.\",\n"
+        "\t\t\t\t})\n"
+        "\t\t\t);\n"
+        "\t\t\tsection.appendChild(metaStatus);\n";
     if (ui.find(old_restart_lead) == std::string::npos || ui.find(old_redraw_lead) == std::string::npos || ui.find(old_art_lead) == std::string::npos) {
         log_event(L"warn", L"inject", L"Troubleshooting help still sits above the buttons.");
     } else {
