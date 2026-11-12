@@ -1124,7 +1124,7 @@ void test_skin_page() {
     check(boot.find("stableSince") != std::string::npos, "boot script no longer waits for the library grid to finish its first pass");
     check(boot.find("wantsPlayer") != std::string::npos, "boot script no longer inserts the player on the Steam window");
     check(boot.find("win.__doomnetStore = window.__doomnetStore") != std::string::npos, "the Steam window does not receive the Store record, so an installed skin is shown as not installed");
-    check(boot.find("20261111-version-1.16.0-party-library") != std::string::npos && boot.find("20261027-version-1.15.0") == std::string::npos, "Steam still loads the player as version 1.15.0");
+    check(boot.find("20261111-version-1.16.0-party-join") != std::string::npos && boot.find("20261027-version-1.15.0") == std::string::npos, "Steam still loads the player as version 1.15.0");
     check(boot.find("win.__doomnetPartyConfig = window.__doomnetPartyConfig") != std::string::npos && boot.find("win.DoomNetStreamTunes = window.DoomNetStreamTunes") != std::string::npos, "the Steam window does not receive StreamTunes, so the listening-party button never appears");
     check(boot.find("doomnet-steamtunes-tab") != std::string::npos, "boot script does not add a SteamTunes tab");
     check(boot.find("row.appendChild(tab)") != std::string::npos, "the SteamTunes tab is not placed after the account name");
@@ -1196,6 +1196,10 @@ void test_skin_page() {
             check(doomnet::write_new_file(L"C:\\Users\\Pablo\\AppData\\Local\\Temp\\doomnet-player-fixed.js", page.data(), page.size(), read_error), "the repaired player page was not written");
         }
     }
+    check(patched_ui.find("button(\"Join Party\", \"\", function () { UI.doomnetOpenParty(false); }, true);") != std::string::npos &&
+              patched_ui.find("placeholder: \"Enter a party code\"") != std::string::npos &&
+              patched_ui.find("Type the code from the host") != std::string::npos,
+          "a listener has no place to type a party code");
     check(patched_ui.find("var leavingPartyPage = UI.doomnetPartyPage;") != std::string::npos &&
               patched_ui.find("UI.searchQuery = value;\n\t\t\tUI.doomnetPartyPage = false;") != std::string::npos &&
               patched_ui.find("var partyOnScreen = UI.doomnetPartyPage || (listening && UI.libraryGroupBy === \"nowplaying\" && !UI.libraryDrill);") != std::string::npos,
@@ -1234,7 +1238,7 @@ void test_skin_page() {
         const size_t closed = kept.find("end");
         check(stop_copy != std::string::npos && guarded != std::string::npos && returned != std::string::npos && closed != std::string::npos && copy_again != std::string::npos && stop_copy < guarded && guarded < returned && returned < closed && closed < copy_again, "the player still copies version 1.15.0 over the 1.16.0 page");
     }
-    check(doomnet::patched_player_bootstrap_text().find("var ASSET_REV = \"20261111-version-1.16.0-party-library\"") != std::string::npos && doomnet::patched_player_bootstrap_text().find("20261027-version-1.15.0") == std::string::npos, "the player files are still cached as version 1.15.0");
+    check(doomnet::patched_player_bootstrap_text().find("var ASSET_REV = \"20261111-version-1.16.0-party-join\"") != std::string::npos && doomnet::patched_player_bootstrap_text().find("20261027-version-1.15.0") == std::string::npos, "the player files are still cached as version 1.15.0");
     check(patched_ui.find("settingsTabList.push({ key: \"store\", label: \"Store\" })") != std::string::npos &&
               patched_ui.find("UI.doomnetRenderStore(view)") != std::string::npos &&
               patched_ui.find("doomnet_install_app") != std::string::npos &&

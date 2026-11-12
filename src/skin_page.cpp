@@ -460,7 +460,8 @@ void repair_party_buttons(std::string& ui) {
         "\t\t\t\t\tUI.showToast(\"Listening Party needs a relay address before it can start.\", 8000);\n"
         "\t\t\t\t}, true);\n"
         "\t\t\t} else if (!state.active) {\n"
-        "\t\t\t\tbutton(\"Start Listening Party\", \"\", function () { UI.doomnetOpenParty(true); }, true);\n";
+        "\t\t\t\tbutton(\"Start Listening Party\", \"\", function () { UI.doomnetOpenParty(true); }, true);\n"
+        "\t\t\t\tbutton(\"Join Party\", \"\", function () { UI.doomnetOpenParty(false); }, true);\n";
     for (size_t at = 0; (at = ui.find(old_slot, at)) != std::string::npos; at += new_slot.size()) {
         ui.replace(at, old_slot.size(), new_slot);
     }
@@ -492,10 +493,10 @@ std::string patched_player_bootstrap_text() {
         return {};
     }
     const std::string old_rev = "var ASSET_REV = \"20261027-version-1.15.0\"";
-    const std::string new_rev = "var ASSET_REV = \"20261111-version-1.16.0-party-library\"";
+    const std::string new_rev = "var ASSET_REV = \"20261111-version-1.16.0-party-join\"";
     const size_t at = text.find(old_rev);
     if (at == std::string::npos) {
-        if (text.find("20261111-version-1.16.0-party-library") == std::string::npos) {
+        if (text.find("20261111-version-1.16.0-party-join") == std::string::npos) {
             log_event(L"warn", L"inject", L"The player loader still uses version 1.15.0, so Steam can keep showing the old page.");
         }
     } else {
@@ -3634,6 +3635,7 @@ std::string patched_player_ui_text() {
 				}, true);
 			} else if (!state.active) {
 				button("Start Listening Party", "", function () { UI.doomnetOpenParty(true); }, true);
+				button("Join Party", "", function () { UI.doomnetOpenParty(false); }, true);
 			} else if (state.role === "host") {
 				button("End Party", "is-danger", function () {
 					UI.doomnetPartyAction("end").then(UI.doomnetCloseParty).catch(function () {});
@@ -3680,6 +3682,30 @@ std::string patched_player_ui_text() {
 			pane.innerHTML = "";
 			var page = el("div", "doomnet-party-page");
 			page.appendChild(el("div", "doomnet-party-title", { text: "Listening Party" }));
+			if (!state.active) {
+				page.appendChild(el("div", "doomnet-party-count", { text: "Type the code from the host" }));
+				var join = el("div", "doomnet-party-join");
+				var input = el("input", "smp-search doomnet-party-join-code", {
+					type: "text",
+					placeholder: "Enter a party code",
+				});
+				input.maxLength = 9;
+				var joinButton = el("button", "smp-btn", { type: "button", text: "Join Party" });
+				function submitJoin() {
+					UI.doomnetPartyAction("join", String(input.value || "").trim().toUpperCase()).catch(function () {});
+				}
+				joinButton.addEventListener("click", submitJoin);
+				input.addEventListener("keydown", function (event) {
+					if (event.key === "Enter") {
+						submitJoin();
+					}
+				});
+				join.appendChild(input);
+				join.appendChild(joinButton);
+				page.appendChild(join);
+				pane.appendChild(page);
+				return;
+			}
 			page.appendChild(el("div", "doomnet-party-count", { text: state.count + "/" + state.capacity }));
 			if (state.role === "listener" && state.pingMs != null) {
 				page.appendChild(el("div", "doomnet-party-ping", { text: state.pingMs + " ms to host" }));
@@ -3729,21 +3755,6 @@ std::string patched_player_ui_text() {
 					roster.appendChild(row);
 				});
 				page.appendChild(roster);
-			}
-			if (!state.active) {
-				var join = el("div", "doomnet-party-join");
-				var input = el("input", "smp-search doomnet-party-join-code", {
-					type: "text",
-					placeholder: "Enter a party code",
-				});
-				input.maxLength = 9;
-				var joinButton = el("button", "smp-btn", { type: "button", text: "Join Party" });
-				joinButton.addEventListener("click", function () {
-					UI.doomnetPartyAction("join", String(input.value || "").trim().toUpperCase()).catch(function () {});
-				});
-				join.appendChild(input);
-				join.appendChild(joinButton);
-				page.appendChild(join);
 			}
 			pane.appendChild(page);
 		},
