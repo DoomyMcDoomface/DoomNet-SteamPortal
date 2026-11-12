@@ -493,10 +493,10 @@ std::string patched_player_bootstrap_text() {
         return {};
     }
     const std::string old_rev = "var ASSET_REV = \"20261027-version-1.15.0\"";
-    const std::string new_rev = "var ASSET_REV = \"20261112-version-1.16.0-scan-files\"";
+    const std::string new_rev = "var ASSET_REV = \"20261112-version-1.16.0-art-live\"";
     const size_t at = text.find(old_rev);
     if (at == std::string::npos) {
-        if (text.find("20261112-version-1.16.0-scan-files") == std::string::npos) {
+        if (text.find("20261112-version-1.16.0-art-live") == std::string::npos) {
             log_event(L"warn", L"inject", L"The player loader still uses version 1.15.0, so Steam can keep showing the old page.");
         }
     } else {
@@ -4222,6 +4222,35 @@ std::string patched_player_ui_text() {
                 art_click_at += new_art_click.size();
             }
         }
+    }
+    const std::string old_art_refresh =
+        "\t\t\t\t\tif ((progress.written || 0) > 0 || (progress.done || 0) > 0) {\n"
+        "\t\t\t\t\t\tUI.refreshMissingArt();\n"
+        "\t\t\t\t\t}\n";
+    const std::string new_art_refresh =
+        "\t\t\t\t\tif ((progress.written || 0) > 0 || (progress.done || 0) > 0) {\n"
+        "\t\t\t\t\t\tUI.artProbeGen = Date.now();\n"
+        "\t\t\t\t\t\tUI.refreshMissingArt();\n"
+        "\t\t\t\t\t}\n";
+    const std::string old_art_done_refresh = "\t\t\t\t\tUI.refreshMissingArt();\n";
+    const std::string new_art_done_refresh =
+        "\t\t\t\t\tUI.artProbeGen = Date.now();\n"
+        "\t\t\t\t\tUI.refreshMissingArt();\n";
+    for (size_t art_refresh_at = 0; (art_refresh_at = ui.find(old_art_refresh, art_refresh_at)) != std::string::npos;) {
+        ui.replace(art_refresh_at, old_art_refresh.size(), new_art_refresh);
+        art_refresh_at += new_art_refresh.size();
+    }
+    for (size_t art_poll_at = 0; (art_poll_at = ui.find("UI.artRegenTimer = setTimeout(pollArt, 2000);", art_poll_at)) != std::string::npos;) {
+        ui.replace(art_poll_at, std::string("UI.artRegenTimer = setTimeout(pollArt, 2000);").size(), "UI.artRegenTimer = setTimeout(pollArt, 500);");
+        art_poll_at += std::string("UI.artRegenTimer = setTimeout(pollArt, 500);").size();
+    }
+    const std::string done_marker = "Artwork cache updated (\" + (progress.written || 0) + \" covers from \" + progress.total + \" albums).\";\n";
+    for (size_t art_done_at = 0; (art_done_at = ui.find(done_marker, art_done_at)) != std::string::npos;) {
+        const size_t refresh_at = ui.find(old_art_done_refresh, art_done_at);
+        if (refresh_at != std::string::npos && refresh_at < art_done_at + 400) {
+            ui.replace(refresh_at, old_art_done_refresh.size(), new_art_done_refresh);
+        }
+        art_done_at += done_marker.size();
     }
     return ui;
 }

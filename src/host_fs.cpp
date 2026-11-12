@@ -2057,6 +2057,7 @@ std::string patched_player_module(const std::string& module, std::string source)
     const std::string new_queue =
         "function library.queue_artwork_regenerate(steamUiDir)\n"
         "\tif true then\n"
+        "\t\tdoomnetArtSteamUi = steamUiDir\n"
         "\t\treturn library.regenerate_artwork()\n"
         "\tend\n"
         "\tlocal jobsDir = art_jobs_dir()\n";
@@ -2068,6 +2069,44 @@ std::string patched_player_module(const std::string& module, std::string source)
             source.replace(queue_at, old_queue.size(), new_queue);
         }
     }
+    const std::string old_group = "\t\t\t\tgroup = { paths = {}, outs = {} }\n";
+    const std::string new_group = "\t\t\t\tgroup = { paths = {}, outs = {}, sample = track }\n";
+    const std::string old_jobs_line = "\tlines[#lines + 1] = \"JOBS\"\n";
+    const std::string new_jobs_line =
+        "\tif doomnetArtSteamUi and doomnetArtSteamUi ~= \"\" then\n"
+        "\t\tlines[#lines + 1] = \"STEAMUI\"\n"
+        "\t\tlines[#lines + 1] = doomnetArtSteamUi\n"
+        "\tend\n"
+        "\tlines[#lines + 1] = \"JOBS\"\n";
+    const std::string old_sep = "\t\tlines[#lines + 1] = \"===\"\n";
+    const std::string new_sep =
+        "\t\tif group.sample then\n"
+        "\t\t\tlines[#lines + 1] = \"SHOW\"\n"
+        "\t\t\tlines[#lines + 1] = library.album_art_safe(group.sample)\n"
+        "\t\tend\n"
+        "\t\tlines[#lines + 1] = \"===\"\n";
+    const std::string old_display = "\tif size < 32 or size > 48 * 1024 * 1024 then\n";
+    const std::string new_display = "\tif size < 32 or size > 64 * 1024 * 1024 then\n";
+    if (source.find("function library.regenerate_artwork") != std::string::npos) {
+        const size_t group_at = source.find(old_group);
+        const size_t jobs_line_at = source.find(old_jobs_line);
+        const size_t sep_at = source.find(old_sep);
+        if (group_at == std::string::npos || jobs_line_at == std::string::npos || sep_at == std::string::npos) {
+            log_event(L"warn", L"lua", L"Regenerate Artwork still does not tell the worker which album cover to put on screen.");
+        } else {
+            source.replace(sep_at, old_sep.size(), new_sep);
+            source.replace(source.find(old_jobs_line), old_jobs_line.size(), new_jobs_line);
+            source.replace(source.find(old_group), old_group.size(), new_group);
+        }
+    }
+    if (source.find("file_is_displayable") != std::string::npos) {
+        const size_t display_at = source.find(old_display);
+        if (display_at == std::string::npos) {
+            log_event(L"warn", L"lua", L"A cover larger than 48 MB is still thrown away before the library can show it.");
+        } else {
+            source.replace(display_at, old_display.size(), new_display);
+        }
+    }
     const std::string old_worker =
         "\tif ok and content and content ~= \"\" then\n"
         "\t\tpcall(utils.write_file, dest, content)\n"
@@ -2075,7 +2114,87 @@ std::string patched_player_module(const std::string& module, std::string source)
     const std::string new_worker =
         "\tif ok and content and content ~= \"\" then\n"
         "\t\tcontent = content:gsub(\"%$side = Find%-Sidecar %$audioPath %$roots\", \"if ($audioPath -match '(?i)\\\\.musiclibrary\\\\\\\\|\\\\\\\\DoomNet Art\\\\\\\\') { return $null }\\n\\t$side = Find-Sidecar $audioPath $roots\\n\\tif ($side -match '(?i)\\\\.musiclibrary\\\\\\\\|\\\\\\\\DoomNet Art\\\\\\\\') { $side = $null }\", 1)\n"
-        "\t\tcontent = content:gsub(\"%$head = Read%-Bytes %$audioPath 16777216\", \"$probe = Read-Bytes $audioPath 10\\n\\t$head = $probe\\n\\tif ($probe -and $probe.Length -ge 10 -and [Text.Encoding]::ASCII.GetString($probe, 0, 3) -eq 'ID3') {\\n\\t\\t$declared = 10 + (([int]$probe[6] -band 0x7f) -shl 21) + (([int]$probe[7] -band 0x7f) -shl 14) + (([int]$probe[8] -band 0x7f) -shl 7) + ([int]$probe[9] -band 0x7f)\\n\\t\\tif ($declared -gt 67108864) { $declared = 67108864 }\\n\\t\\tif ($declared -gt 10) { $head = Read-Bytes $audioPath $declared }\\n\\t} elseif ($probe -and $probe.Length -ge 4 -and [Text.Encoding]::ASCII.GetString($probe, 0, 4) -eq 'fLaC') {\\n\\t\\t$head = Read-Bytes $audioPath 8388608\\n\\t} else {\\n\\t\\t$head = Read-Bytes $audioPath 1048576\\n\\t}\", 1)\n"
+        "\t\tcontent = content:gsub(\"%$head = Read%-Bytes %$audioPath 16777216\", \"$head = Read-EmbeddedHead $audioPath\", 1)\n"
+        "\t\tcontent = content:gsub(\"function Extract%-Art%(%[string%]%$audioPath, %[string%[%]]%$roots%) {\", [=[function Read-EmbeddedHead([string]$audioPath) {\n"
+        "\t$cap = 67108864\n"
+        "\t$probe = Read-Bytes $audioPath 10\n"
+        "\t$path = $audioPath\n"
+        "\tif (-not $probe -or $probe.Length -lt 8) { return $probe }\n"
+        "\t$ascii = [Text.Encoding]::ASCII\n"
+        "\t$kind = $ascii.GetString($probe, 0, [Math]::Min(4, $probe.Length))\n"
+        "\tif ($kind.StartsWith('ID3') -and $probe.Length -ge 10) {\n"
+        "\t\t$declared = 10 + (([int]$probe[6] -band 0x7f) -shl 21) + (([int]$probe[7] -band 0x7f) -shl 14) + (([int]$probe[8] -band 0x7f) -shl 7) + ([int]$probe[9] -band 0x7f)\n"
+        "\t\tif ($declared -gt $cap) { $declared = $cap }\n"
+        "\t\tif ($declared -gt 10) { return Read-Bytes $path $declared }\n"
+        "\t\treturn $probe\n"
+        "\t}\n"
+        "\t$fs = [IO.File]::Open($path, 'Open', 'Read', 'ReadWrite')\n"
+        "\ttry {\n"
+        "\t\tif ($kind.StartsWith('fLaC')) {\n"
+        "\t\t\t$ms = New-Object IO.MemoryStream\n"
+        "\t\t\t$four = New-Object byte[] 4\n"
+        "\t\t\t[void]$fs.Read($four, 0, 4)\n"
+        "\t\t\t$ms.Write($four, 0, 4)\n"
+        "\t\t\twhile ($ms.Length -lt $cap) {\n"
+        "\t\t\t\t$hdr = New-Object byte[] 4\n"
+        "\t\t\t\t$got = $fs.Read($hdr, 0, 4)\n"
+        "\t\t\t\tif ($got -lt 4) { break }\n"
+        "\t\t\t\t$ms.Write($hdr, 0, 4)\n"
+        "\t\t\t\t$last = ($hdr[0] -band 0x80) -ne 0\n"
+        "\t\t\t\t$len = (([int]$hdr[1]) -shl 16) -bor (([int]$hdr[2]) -shl 8) -bor [int]$hdr[3]\n"
+        "\t\t\t\tif ($len -lt 0) { break }\n"
+        "\t\t\t\t$room = $cap - [int]$ms.Length\n"
+        "\t\t\t\tif ($len -gt $room) { $len = $room }\n"
+        "\t\t\t\t$left = $len\n"
+        "\t\t\t\t$chunk = New-Object byte[] 1048576\n"
+        "\t\t\t\twhile ($left -gt 0) {\n"
+        "\t\t\t\t\t$n = [Math]::Min($chunk.Length, $left)\n"
+        "\t\t\t\t\t$got = $fs.Read($chunk, 0, $n)\n"
+        "\t\t\t\t\tif ($got -le 0) { break }\n"
+        "\t\t\t\t\t$ms.Write($chunk, 0, $got)\n"
+        "\t\t\t\t\t$left -= $got\n"
+        "\t\t\t\t}\n"
+        "\t\t\t\tif ($last) { break }\n"
+        "\t\t\t}\n"
+        "\t\t\treturn $ms.ToArray()\n"
+        "\t\t}\n"
+        "\t\t$ms = New-Object IO.MemoryStream\n"
+        "\t\t$fs.Position = 0\n"
+        "\t\twhile (($fs.Position + 8) -le $fs.Length -and $ms.Length -lt $cap) {\n"
+        "\t\t\t$pos = $fs.Position\n"
+        "\t\t\t$hdr = New-Object byte[] 8\n"
+        "\t\t\t$got = $fs.Read($hdr, 0, 8)\n"
+        "\t\t\t\tif ($got -lt 8) { break }\n"
+        "\t\t\t$size = ([int]$hdr[0] -shl 24) -bor ([int]$hdr[1] -shl 16) -bor ([int]$hdr[2] -shl 8) -bor [int]$hdr[3]\n"
+        "\t\t\t$type = $ascii.GetString($hdr, 4, 4)\n"
+        "\t\t\tif ($size -lt 8) { break }\n"
+        "\t\t\tif ($type -eq 'mdat' -or $type -eq 'free' -or $type -eq 'skip') {\n"
+        "\t\t\t\t$fs.Position = [Math]::Min($fs.Length, [int64]$pos + $size)\n"
+        "\t\t\t\tcontinue\n"
+        "\t\t\t}\n"
+        "\t\t\t$take = [Math]::Min([int64]$size, [int64]($cap - $ms.Length))\n"
+        "\t\t\t$fs.Position = $pos\n"
+        "\t\t\t$left = [int]$take\n"
+        "\t\t\t$chunk = New-Object byte[] 1048576\n"
+        "\t\t\twhile ($left -gt 0) {\n"
+        "\t\t\t\t$n = [Math]::Min($chunk.Length, $left)\n"
+        "\t\t\t\t$got = $fs.Read($chunk, 0, $n)\n"
+        "\t\t\t\tif ($got -le 0) { break }\n"
+        "\t\t\t\t$ms.Write($chunk, 0, $got)\n"
+        "\t\t\t\t$left -= $got\n"
+        "\t\t\t}\n"
+        "\t\t\t$next = [Math]::Min($fs.Length, [int64]$pos + $size)\n"
+        "\t\t\tif ($fs.Position -lt $next) { $fs.Position = $next }\n"
+        "\t\t}\n"
+        "\t\tif ($ms.Length -ge 8) { return $ms.ToArray() }\n"
+        "\t} finally { $fs.Close() }\n"
+        "\treturn $probe\n"
+        "}\n"
+        "function Extract-Art([string]$audioPath, [string[]]$roots) {]=], 1)\n"
+        "\t\tcontent = content:gsub(\"if %(%$line %-eq 'JOBS'%) { %$mode = 'jobs'; continue }\", \"if ($line -eq 'STEAMUI') { $mode = 'steamui'; continue }\\n\\tif ($line -eq 'SHOW') { $mode = 'show'; continue }\\n\\tif ($line -eq 'JOBS') { $mode = 'jobs'; continue }\", 1)\n"
+        "\t\tcontent = content:gsub(\"if %(%$line %-like '%*%.json'%) {\", \"if ($mode -eq 'steamui') { $script:DoomNetSteamUi = $line; continue }\\n\\tif ($mode -eq 'show') { if ($current) { $current.show = $line }; continue }\\n\\tif ($line -like '*.json') {\", 1)\n"
+        "\t\tcontent = content:gsub(\"if %(Write%-ArtJson %$out %$img%) { %$written%+%+ }\", \"if ($out -like '*.json') { if (Write-ArtJson $out $img) { $written++ } }\", 1)\n"
+        "\t\tcontent = content:gsub(\"Write%-ProgressFile %$progressPath %(%$n %+ 1%) %$total %$written %$true\", \"if ($img -and $job.show -and -not (Test-Path -LiteralPath (Join-Path (Split-Path $JobDir -Parent) ('art_jpeg\\albums\\' + $job.show + '.custom')))) {\\n\\t\\t\\t\\t$ext = 'jpg'\\n\\t\\t\\t\\tif ($img.Length -ge 8 -and $img[0] -eq 0x89) { $ext = 'png' }\\n\\t\\t\\t\\t$shown = @()\\n\\t\\t\\t\\tif ($script:DoomNetSteamUi) { $shown += (Join-Path $script:DoomNetSteamUi ('steam-music-player\\art\\albums\\' + $job.show + '.' + $ext)) }\\n\\t\\t\\t\\t$shown += (Join-Path (Split-Path $JobDir -Parent) ('art_jpeg\\albums\\' + $job.show + '.' + $ext))\\n\\t\\t\\t\\tforeach ($destImg in $shown) {\\n\\t\\t\\t\\t\\t$dirImg = Split-Path -Parent $destImg\\n\\t\\t\\t\\t\\tif ($dirImg -and -not (Test-Path -LiteralPath $dirImg)) { New-Item -ItemType Directory -Path $dirImg -Force | Out-Null }\\n\\t\\t\\t\\t\\t[IO.File]::WriteAllBytes($destImg, $img)\\n\\t\\t\\t\\t}\\n\\t\\t\\t}\\n\\t\\t\\tWrite-ProgressFile $progressPath ($n + 1) $total $written $true\", 1)\n"
         "\t\tcontent = content:gsub(\"%$tail = Read%-Tail %$audioPath 8388608\", \"$tail = Read-Tail $audioPath 2097152\", 1)\n"
         "\t\tpcall(utils.write_file, dest, content)\n"
         "\tend\n";
