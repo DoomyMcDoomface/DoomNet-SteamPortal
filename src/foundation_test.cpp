@@ -1200,7 +1200,7 @@ void test_skin_page() {
     check(boot.find("stableSince") != std::string::npos, "boot script no longer waits for the library grid to finish its first pass");
     check(boot.find("wantsPlayer") != std::string::npos, "boot script no longer inserts the player on the Steam window");
     check(boot.find("win.__doomnetStore = window.__doomnetStore") != std::string::npos, "the Steam window does not receive the Store record, so an installed skin is shown as not installed");
-    check(boot.find("20261112-version-1.19.4-metadata-genre") != std::string::npos && boot.find("20261027-version-1.15.0") == std::string::npos, "Steam still loads the player as version 1.15.0");
+    check(boot.find("20261112-version-1.19.5-every-cover") != std::string::npos && boot.find("20261027-version-1.15.0") == std::string::npos, "Steam still loads the player as version 1.15.0");
     check(boot.find("doomnetBindingReady") != std::string::npos && boot.find("if (!doomnetBindingReady)") != std::string::npos, "the boot script still returns before the skin when the binding is already installed");
     check(boot.find("win.__doomnetPartyConfig = window.__doomnetPartyConfig") != std::string::npos && boot.find("win.DoomNetStreamTunes = window.DoomNetStreamTunes") != std::string::npos, "the Steam window does not receive StreamTunes, so the listening-party button never appears");
     check(boot.find("doomnet-steamtunes-tab") != std::string::npos, "boot script does not add a SteamTunes tab");
@@ -1302,7 +1302,7 @@ void test_skin_page() {
               patched_ui.find("Leave the current party before starting one") != std::string::npos &&
               patched_ui.find("startHost && UI.doomnetListenerParty()") != std::string::npos,
           "a listener session does not replace Now Playing or restore the local player on Leave Session");
-    check(patched_ui.find("var PLUGIN_VERSION = \"1.19.4\"") != std::string::npos && patched_ui.find("var PLUGIN_VERSION = \"1.15.0\"") == std::string::npos && patched_ui.find("Start Listening Party") != std::string::npos && patched_ui.find("tagCount") != std::string::npos, "the About version is still 1.19.3, or it does not include the listening party or the scan");
+    check(patched_ui.find("var PLUGIN_VERSION = \"1.19.5\"") != std::string::npos && patched_ui.find("var PLUGIN_VERSION = \"1.15.0\"") == std::string::npos && patched_ui.find("Start Listening Party") != std::string::npos && patched_ui.find("tagCount") != std::string::npos, "the About version is still 1.19.4, or it does not include the listening party or the scan");
     check(patched_ui.find("text: \"Refresh Metadata\"") != std::string::npos && patched_ui.find("callServer(\"refresh_metadata_batch\"") != std::string::npos && patched_ui.find("callServer(\"refresh_metadata_start\"") != std::string::npos && patched_ui.find("Updating tags ") != std::string::npos && patched_ui.find("invalidateBrowseCache") != std::string::npos && patched_ui.find("does not remove songs, and it does not rebuild covers.") != std::string::npos, "Troubleshooting has no Refresh Metadata button under Regenerate Artwork");
     {
         const std::string stock_sync =
@@ -1316,7 +1316,7 @@ void test_skin_page() {
         const size_t closed = kept.find("end");
         check(stop_copy != std::string::npos && guarded != std::string::npos && returned != std::string::npos && closed != std::string::npos && copy_again != std::string::npos && stop_copy < guarded && guarded < returned && returned < closed && closed < copy_again, "the player still copies version 1.15.0 over the 1.16.0 page");
     }
-    check(doomnet::patched_player_bootstrap_text().find("var ASSET_REV = \"20261112-version-1.19.4-metadata-genre\"") != std::string::npos && doomnet::patched_player_bootstrap_text().find("20261027-version-1.15.0") == std::string::npos, "the player files are still cached as version 1.15.0");
+    check(doomnet::patched_player_bootstrap_text().find("var ASSET_REV = \"20261112-version-1.19.5-every-cover\"") != std::string::npos && doomnet::patched_player_bootstrap_text().find("20261027-version-1.15.0") == std::string::npos, "the player files are still cached as version 1.15.0");
     {
         const std::string refresh_source = "function library.regenerate_artwork()\nreturn library\n";
         const std::string refreshed = doomnet::patched_player_module("library", refresh_source);
@@ -1381,7 +1381,7 @@ void test_skin_page() {
                   "the scan still does not walk folders inside the music folder");
             check(patched.find("return library.regenerate_artwork()") != std::string::npos && patched.find("$probe = Read-Bytes $audioPath 10") != std::string::npos,
                   "Regenerate Artwork still clears the cache and reads more than the picture stored in each song");
-            check(patched.find("STEAMUI") != std::string::npos && patched.find("SHOW") != std::string::npos && patched.find("sample = track") != std::string::npos && patched.find("512 * 1024 * 1024") != std::string::npos && patched.find("Every song in the album is checked") != std::string::npos && patched.find("Read-AnyPicture") != std::string::npos && patched.find("Test-RealCover") != std::string::npos && patched.find("$bestCover") != std::string::npos && patched.find("2147483647") != std::string::npos && patched.find("listJob.folders or {}") != std::string::npos && patched.find("DoomNetSeenDir") != std::string::npos && patched.find("procexec.delete_file(scan_new_path())") != std::string::npos,
+            check(patched.find("STEAMUI") != std::string::npos && patched.find("SHOW") != std::string::npos && patched.find("sample = track") != std::string::npos && patched.find("512 * 1024 * 1024") != std::string::npos && patched.find("Every song in the album is checked") != std::string::npos && patched.find("Read-AnyPicture") != std::string::npos && patched.find("Slice-Cover") != std::string::npos && patched.find("$id -eq 'PIC'") != std::string::npos && patched.find("APETAGEX") != std::string::npos && patched.find("fullSafe") != std::string::npos && patched.find("Test-RealCover") != std::string::npos && patched.find("$bestCover") != std::string::npos && patched.find("2147483647") != std::string::npos && patched.find("listJob.folders or {}") != std::string::npos && patched.find("DoomNetSeenDir") != std::string::npos && patched.find("procexec.delete_file(scan_new_path())") != std::string::npos,
                   "Regenerate Artwork still does not put a found picture on the library view");
             check(patched.find("doomnetAddedFolder = path") != std::string::npos && patched.find("listJob.addedOnly") != std::string::npos && patched.find("Songs already in the library are skipped.") != std::string::npos,
                   "adding a folder still scans songs that are already in the library");

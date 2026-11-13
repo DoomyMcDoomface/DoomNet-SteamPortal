@@ -886,10 +886,10 @@ std::string patched_player_bootstrap_text() {
         return {};
     }
     const std::string old_rev = "var ASSET_REV = \"20261027-version-1.15.0\"";
-    const std::string new_rev = "var ASSET_REV = \"20261112-version-1.19.4-metadata-genre\"";
+    const std::string new_rev = "var ASSET_REV = \"20261112-version-1.19.5-every-cover\"";
     const size_t at = text.find(old_rev);
     if (at == std::string::npos) {
-        if (text.find("20261112-version-1.19.4-metadata-genre") == std::string::npos) {
+        if (text.find("20261112-version-1.19.5-every-cover") == std::string::npos) {
             log_event(L"warn", L"inject", L"The player loader still uses version 1.15.0, so Steam can keep showing the old page.");
         }
     } else {
@@ -913,7 +913,7 @@ std::string patched_player_ui_text() {
     }
     ui.swap(normalized);
     const std::string old_plugin_version = "var PLUGIN_VERSION = \"1.15.0\"";
-    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.19.4\"";
+    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.19.5\"";
     for (size_t at = 0; (at = ui.find(old_plugin_version, at)) != std::string::npos; at += new_plugin_version.size()) {
         ui.replace(at, old_plugin_version.size(), new_plugin_version);
     }
@@ -3786,7 +3786,19 @@ std::string patched_player_ui_text() {
         "\t\t\t\tsafe = \"unknown\";\n"
         "\t\t\t}\n"
         "\t\t\tif (safe.length > 80) {\n"
-        "\t\t\t\tsafe = safe.slice(0, 80);\n"
+        "\t\t\t\tvar fullSafe = safe;\n"
+        "\t\t\t\tsafe = safe.slice(0, 71);\n"
+        "\t\t\t\tvar nameHash = 2166136261;\n"
+        "\t\t\t\tvar nameIndex;\n"
+        "\t\t\t\tfor (nameIndex = 0; nameIndex < fullSafe.length; nameIndex++) {\n"
+        "\t\t\t\t\tnameHash = (nameHash + fullSafe.charCodeAt(nameIndex)) >>> 0;\n"
+        "\t\t\t\t\tvar nameLo = nameHash & 65535;\n"
+        "\t\t\t\t\tvar nameHi = nameHash >>> 16;\n"
+        "\t\t\t\t\tnameHash = ((nameLo * 403) + (((nameLo * 256 + nameHi * 403) & 65535) << 16)) >>> 0;\n"
+        "\t\t\t\t}\n"
+        "\t\t\t\tvar nameHex = nameHash.toString(16);\n"
+        "\t\t\t\twhile (nameHex.length < 8) { nameHex = \"0\" + nameHex; }\n"
+        "\t\t\t\tsafe = safe + \"_\" + nameHex;\n"
         "\t\t\t}\n"
         "\t\t\tif (!/[A-Za-z0-9]/.test(String(album)) && window.TextEncoder) {\n"
         "\t\t\t\tvar asciiLower = function (value) {\n"
