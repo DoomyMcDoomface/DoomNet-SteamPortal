@@ -2628,6 +2628,8 @@ std::string patched_player_module(const std::string& module, std::string source)
         "\tmissing = 0,\n"
         "\tartCopied = 0,\n"
         "\tunpersisted = 0,\n"
+        "\tpublished = 0,\n"
+        "\tnextPublish = 0,\n"
         "\tsteamUiDir = \"\",\n"
         "}\n"
         "\n"
@@ -2703,6 +2705,7 @@ std::string patched_player_module(const std::string& module, std::string source)
         "\t\tunchanged = refreshMeta.unchanged,\n"
         "\t\tmissing = refreshMeta.missing,\n"
         "\t\tartCopied = refreshMeta.artCopied,\n"
+        "\t\tpublished = refreshMeta.published or 0,\n"
         "\t}\n"
         "end\n"
         "\n"
@@ -2716,6 +2719,17 @@ std::string patched_player_module(const std::string& module, std::string source)
         "\t\t\tpaths[#paths + 1] = path\n"
         "\t\tend\n"
         "\tend\n"
+        "\t-- Songs that have not been read since the file changed are read first.\n"
+        "\ttable.sort(paths, function(a, b)\n"
+        "\t\tlocal leftTrack = state.tracksByPath[a]\n"
+        "\t\tlocal rightTrack = state.tracksByPath[b]\n"
+        "\t\tlocal leftTime = leftTrack and tonumber(leftTrack.tagMtime) or 0\n"
+        "\t\tlocal rightTime = rightTrack and tonumber(rightTrack.tagMtime) or 0\n"
+        "\t\tif leftTime == rightTime then\n"
+        "\t\t\treturn tostring(a) < tostring(b)\n"
+        "\t\tend\n"
+        "\t\treturn leftTime < rightTime\n"
+        "\tend)\n"
         "\trefreshMeta.active = true\n"
         "\trefreshMeta.paths = paths\n"
         "\trefreshMeta.index = 1\n"
@@ -2724,6 +2738,8 @@ std::string patched_player_module(const std::string& module, std::string source)
         "\trefreshMeta.missing = 0\n"
         "\trefreshMeta.artCopied = 0\n"
         "\trefreshMeta.unpersisted = 0\n"
+        "\trefreshMeta.published = 0\n"
+        "\trefreshMeta.nextPublish = 0\n"
         "\trefreshMeta.steamUiDir = type(steamUiDir) == \"string\" and steamUiDir or \"\"\n"
         "\treturn refresh_status()\n"
         "end\n"
@@ -2809,7 +2825,12 @@ std::string patched_player_module(const std::string& module, std::string source)
         "\t\trefreshMeta.active = false\n"
         "\t\tif refreshMeta.updated > 0 then\n"
         "\t\t\tpersist_compact_snapshot()\n"
+        "\t\t\trefreshMeta.published = refreshMeta.updated\n"
         "\t\tend\n"
+        "\telseif refreshMeta.updated > (refreshMeta.published or 0) and os.time() >= (refreshMeta.nextPublish or 0) then\n"
+        "\t\tpersist_compact_snapshot()\n"
+        "\t\trefreshMeta.published = refreshMeta.updated\n"
+        "\t\trefreshMeta.nextPublish = os.time() + 8\n"
         "\tend\n"
         "\treturn refresh_status()\n"
         "end\n";
@@ -2823,7 +2844,22 @@ std::string patched_player_module(const std::string& module, std::string source)
             log_event(L"warn", L"lua", L"Refresh Metadata was not added, so a tag edit still needs a full library scan.");
         }
     } else if (source.find("function library.refresh_metadata_batch") == std::string::npos) {
-        source.insert(library_end_at, refresh_metadata);
+        const std::string old_publish_skip =
+            "\tif #encoded == lastPublishedLen and destCount == wantCount and destCount > 0 then\n"
+            "\t\treturn true\n"
+            "\tend\n";
+        const std::string new_publish_skip =
+            "\tif destOk and destContent == encoded then\n"
+            "\t\treturn true\n"
+            "\tend\n";
+        const size_t publish_skip_at = source.find(old_publish_skip);
+        if (publish_skip_at == std::string::npos) {
+            log_event(L"warn", L"lua", L"A changed genre can be saved in the library and still left out of the list on screen.");
+        } else {
+            source.replace(publish_skip_at, old_publish_skip.size(), new_publish_skip);
+        }
+        const size_t insert_at = source.rfind(library_end);
+        source.insert(insert_at, refresh_metadata);
     }
     return source;
 }

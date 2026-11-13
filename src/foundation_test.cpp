@@ -1200,7 +1200,7 @@ void test_skin_page() {
     check(boot.find("stableSince") != std::string::npos, "boot script no longer waits for the library grid to finish its first pass");
     check(boot.find("wantsPlayer") != std::string::npos, "boot script no longer inserts the player on the Steam window");
     check(boot.find("win.__doomnetStore = window.__doomnetStore") != std::string::npos, "the Steam window does not receive the Store record, so an installed skin is shown as not installed");
-    check(boot.find("20261112-version-1.19.3-library-load") != std::string::npos && boot.find("20261027-version-1.15.0") == std::string::npos, "Steam still loads the player as version 1.15.0");
+    check(boot.find("20261112-version-1.19.4-metadata-genre") != std::string::npos && boot.find("20261027-version-1.15.0") == std::string::npos, "Steam still loads the player as version 1.15.0");
     check(boot.find("doomnetBindingReady") != std::string::npos && boot.find("if (!doomnetBindingReady)") != std::string::npos, "the boot script still returns before the skin when the binding is already installed");
     check(boot.find("win.__doomnetPartyConfig = window.__doomnetPartyConfig") != std::string::npos && boot.find("win.DoomNetStreamTunes = window.DoomNetStreamTunes") != std::string::npos, "the Steam window does not receive StreamTunes, so the listening-party button never appears");
     check(boot.find("doomnet-steamtunes-tab") != std::string::npos, "boot script does not add a SteamTunes tab");
@@ -1302,8 +1302,8 @@ void test_skin_page() {
               patched_ui.find("Leave the current party before starting one") != std::string::npos &&
               patched_ui.find("startHost && UI.doomnetListenerParty()") != std::string::npos,
           "a listener session does not replace Now Playing or restore the local player on Leave Session");
-    check(patched_ui.find("var PLUGIN_VERSION = \"1.19.3\"") != std::string::npos && patched_ui.find("var PLUGIN_VERSION = \"1.15.0\"") == std::string::npos && patched_ui.find("Start Listening Party") != std::string::npos && patched_ui.find("tagCount") != std::string::npos, "the About version is still 1.19.2, or it does not include the listening party or the scan");
-    check(patched_ui.find("text: \"Refresh Metadata\"") != std::string::npos && patched_ui.find("callServer(\"refresh_metadata_batch\"") != std::string::npos && patched_ui.find("callServer(\"refresh_metadata_start\"") != std::string::npos && patched_ui.find("Updating tags ") != std::string::npos && patched_ui.find("does not remove songs, and it does not rebuild covers.") != std::string::npos, "Troubleshooting has no Refresh Metadata button under Regenerate Artwork");
+    check(patched_ui.find("var PLUGIN_VERSION = \"1.19.4\"") != std::string::npos && patched_ui.find("var PLUGIN_VERSION = \"1.15.0\"") == std::string::npos && patched_ui.find("Start Listening Party") != std::string::npos && patched_ui.find("tagCount") != std::string::npos, "the About version is still 1.19.3, or it does not include the listening party or the scan");
+    check(patched_ui.find("text: \"Refresh Metadata\"") != std::string::npos && patched_ui.find("callServer(\"refresh_metadata_batch\"") != std::string::npos && patched_ui.find("callServer(\"refresh_metadata_start\"") != std::string::npos && patched_ui.find("Updating tags ") != std::string::npos && patched_ui.find("invalidateBrowseCache") != std::string::npos && patched_ui.find("does not remove songs, and it does not rebuild covers.") != std::string::npos, "Troubleshooting has no Refresh Metadata button under Regenerate Artwork");
     {
         const std::string stock_sync =
             "local function sync_assets_to_steamui()\n"
@@ -1316,14 +1316,14 @@ void test_skin_page() {
         const size_t closed = kept.find("end");
         check(stop_copy != std::string::npos && guarded != std::string::npos && returned != std::string::npos && closed != std::string::npos && copy_again != std::string::npos && stop_copy < guarded && guarded < returned && returned < closed && closed < copy_again, "the player still copies version 1.15.0 over the 1.16.0 page");
     }
-    check(doomnet::patched_player_bootstrap_text().find("var ASSET_REV = \"20261112-version-1.19.3-library-load\"") != std::string::npos && doomnet::patched_player_bootstrap_text().find("20261027-version-1.15.0") == std::string::npos, "the player files are still cached as version 1.15.0");
+    check(doomnet::patched_player_bootstrap_text().find("var ASSET_REV = \"20261112-version-1.19.4-metadata-genre\"") != std::string::npos && doomnet::patched_player_bootstrap_text().find("20261027-version-1.15.0") == std::string::npos, "the player files are still cached as version 1.15.0");
     {
         const std::string refresh_source = "function library.regenerate_artwork()\nreturn library\n";
         const std::string refreshed = doomnet::patched_player_module("library", refresh_source);
         const size_t refresh_at = refreshed.find("function library.refresh_metadata_batch");
         const size_t refresh_end = refresh_at == std::string::npos ? std::string::npos : refreshed.find("\nreturn library", refresh_at);
         const std::string refresh_body = refresh_at == std::string::npos || refresh_end == std::string::npos ? std::string() : refreshed.substr(refresh_at, refresh_end - refresh_at);
-        check(refresh_body.find("A missing file stays in the library") != std::string::npos && refresh_body.find("The id stays the one already stored") != std::string::npos && refresh_body.find("id = make_track_id") == std::string::npos && refresh_body.find("fs.file_mtime") != std::string::npos && refresh_body.find("persist_compact_snapshot()") != std::string::npos, "refreshing metadata can drop a missing song or give a song a new id");
+        check(refresh_body.find("A missing file stays in the library") != std::string::npos && refresh_body.find("The id stays the one already stored") != std::string::npos && refresh_body.find("id = make_track_id") == std::string::npos && refresh_body.find("fs.file_mtime") != std::string::npos && refreshed.find("Songs that have not been read since the file changed are read first") != std::string::npos && refresh_body.find("persist_compact_snapshot()") != std::string::npos, "refreshing metadata can drop a missing song or give a song a new id");
         const std::string refresh_rpc = "function regenerate_artwork()\n\treturn json.encode(library.regenerate_artwork())\nend\n";
         const std::string refreshed_main = doomnet::patched_player_module("main", refresh_rpc);
         check(refreshed_main.find("function refresh_metadata_start()") != std::string::npos && refreshed_main.find("function refresh_metadata_batch(batchSize)") != std::string::npos && refreshed_main.find("library.refresh_metadata_start, steamui_dir()") != std::string::npos, "the page cannot ask the library to refresh tags");
@@ -1385,7 +1385,7 @@ void test_skin_page() {
                   "Regenerate Artwork still does not put a found picture on the library view");
             check(patched.find("doomnetAddedFolder = path") != std::string::npos && patched.find("listJob.addedOnly") != std::string::npos && patched.find("Songs already in the library are skipped.") != std::string::npos,
                   "adding a folder still scans songs that are already in the library");
-            check(patched.find("result.playlistsUpdated = updated") != std::string::npos && patched.find("if listed then") != std::string::npos,
+            check(patched.find("result.playlistsUpdated = updated") != std::string::npos && patched.find("if listed then") != std::string::npos && patched.find("destOk and destContent == encoded") != std::string::npos,
                   "Scan For New Tracks still finishes without importing playlist files");
             lua_State* library_state = luaL_newstate();
             const int library_loaded = library_state == nullptr ? LUA_ERRMEM : luaL_loadbufferx(library_state, patched.data(), patched.size(), "@library.lua", "t");

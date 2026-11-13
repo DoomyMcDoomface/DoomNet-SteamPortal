@@ -886,10 +886,10 @@ std::string patched_player_bootstrap_text() {
         return {};
     }
     const std::string old_rev = "var ASSET_REV = \"20261027-version-1.15.0\"";
-    const std::string new_rev = "var ASSET_REV = \"20261112-version-1.19.3-library-load\"";
+    const std::string new_rev = "var ASSET_REV = \"20261112-version-1.19.4-metadata-genre\"";
     const size_t at = text.find(old_rev);
     if (at == std::string::npos) {
-        if (text.find("20261112-version-1.19.3-library-load") == std::string::npos) {
+        if (text.find("20261112-version-1.19.4-metadata-genre") == std::string::npos) {
             log_event(L"warn", L"inject", L"The player loader still uses version 1.15.0, so Steam can keep showing the old page.");
         }
     } else {
@@ -913,7 +913,7 @@ std::string patched_player_ui_text() {
     }
     ui.swap(normalized);
     const std::string old_plugin_version = "var PLUGIN_VERSION = \"1.15.0\"";
-    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.19.3\"";
+    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.19.4\"";
     for (size_t at = 0; (at = ui.find(old_plugin_version, at)) != std::string::npos; at += new_plugin_version.size()) {
         ui.replace(at, old_plugin_version.size(), new_plugin_version);
     }
@@ -4945,6 +4945,7 @@ std::string patched_player_ui_text() {
         "\t\t\t\t\tmetaBtn.textContent = \"Refresh Metadata\";\n"
         "\t\t\t\t\tmetaStatus.textContent = \"The tags could not be read. The library was not changed.\";\n"
         "\t\t\t\t};\n"
+        "\t\t\t\tvar seenPublished = 0;\n"
         "\t\t\t\tvar step = function () {\n"
         "\t\t\t\t\treturn callServer(\"refresh_metadata_batch\", [UI.SCAN_BATCH_SIZE]).then(function (info) {\n"
         "\t\t\t\t\t\tinfo = info || {};\n"
@@ -4956,6 +4957,15 @@ std::string patched_player_ui_text() {
         "\t\t\t\t\t\tvar total = info.total || 0;\n"
         "\t\t\t\t\t\tmetaBtn.textContent = \"Refreshing Metadata... \" + doneCount + \" / \" + total;\n"
         "\t\t\t\t\t\tmetaStatus.textContent = \"Updating tags \" + doneCount + \" / \" + total + \".\";\n"
+        "\t\t\t\t\t\tif ((info.published || 0) !== seenPublished) {\n"
+        "\t\t\t\t\t\t\tseenPublished = info.published || 0;\n"
+        "\t\t\t\t\t\t\tif (typeof UI.invalidateBrowseCache === \"function\") {\n"
+        "\t\t\t\t\t\t\t\tUI.invalidateBrowseCache();\n"
+        "\t\t\t\t\t\t\t}\n"
+        "\t\t\t\t\t\t\tif (typeof UI.refreshLibraryFromServer === \"function\") {\n"
+        "\t\t\t\t\t\t\t\tUI.refreshLibraryFromServer();\n"
+        "\t\t\t\t\t\t\t}\n"
+        "\t\t\t\t\t\t}\n"
         "\t\t\t\t\t\tif (info.done) {\n"
         "\t\t\t\t\t\t\tmetaBtn.disabled = false;\n"
         "\t\t\t\t\t\t\tmetaBtn.textContent = \"Refresh Metadata\";\n"
