@@ -989,17 +989,19 @@ UpdateCheckResult check_production_updates(const std::wstring& exe_path, const s
     const std::wstring local = data_root + L"\\production-manifest.json";
     std::string json;
     std::wstring error;
-    bool have = false;
+    bool from_network = false;
     if (ensure_directory(data_root + L"\\updates") && download_https(published, cached, 64u * 1024u, error) && read_entire_file(cached, json, error)) {
-        have = true;
+        from_network = true;
     }
-    if (!have) {
+    if (!from_network) {
         error.clear();
-        have = read_entire_file(local, json, error);
-    }
-    if (!have) {
-        log_event(L"info", L"installer", (L"Production updates are on, and neither '" + std::wstring(published) + L"' nor '" + local + L"' could be read, so no payload was replaced.").c_str());
-        result.message = L"The update list could not be read, so nothing was replaced.";
+        if (!read_entire_file(local, json, error)) {
+            log_event(L"info", L"installer", (L"Production updates are on, and neither '" + std::wstring(published) + L"' nor '" + local + L"' could be read, so no payload was replaced.").c_str());
+            result.message = L"The published update list could not be downloaded, so this PC was not compared with the latest release. Nothing was replaced, and Steam was not restarted.";
+            return result;
+        }
+        log_event(L"info", L"installer", (L"The published update list could not be downloaded. '" + local + L"' is an older saved copy, so it was not used to decide that this PC is current.").c_str());
+        result.message = L"The published update list could not be downloaded, so this PC was not compared with the latest release. Nothing was replaced, and Steam was not restarted.";
         return result;
     }
     ReleaseManifest manifest;
@@ -1017,13 +1019,13 @@ UpdateCheckResult check_production_updates(const std::wstring& exe_path, const s
     const UpdatePlan plan = updates_needed(manifest, installed);
     if (!plan.any()) {
         if (host_file_is_newer_than_this_process(exe_path)) {
-            log_event(L"info", L"installer", (L"The production manifest matches, but '" + exe_path + L"' was written after this copy started, so Steam is still showing the old page.").c_str());
+            log_event(L"info", L"installer", (L"The published update id matches the record in versions.json, but '" + exe_path + L"' was written after this copy started, so this session is still the older program.").c_str());
             result.restart_steam = true;
-            result.message = L"The new version is already on this PC. Quit Steam and open it again to use it.";
+            result.message = L"This Steam session is still running an older DoomNet than the file on this PC. Steam is restarting so that file can load.";
             return result;
         }
-        log_event(L"info", L"installer", L"The production manifest matches the installed versions. No payload was replaced.");
-        result.message = L"This copy is already up to date.";
+        log_event(L"info", L"installer", (L"The published update id matches versions.json, and '" + exe_path + L"' is the file this session started from. No payload was replaced.").c_str());
+        result.message = L"This running copy matches the published update. Nothing was downloaded, and Steam was not restarted.";
         return result;
     }
     publish_update_notice(L"A new version is available. It's downloading now.");

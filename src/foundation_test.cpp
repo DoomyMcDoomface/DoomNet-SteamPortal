@@ -31,6 +31,7 @@
 #include <tlhelp32.h>
 
 #include <cstdio>
+#include <fstream>
 #include <cstring>
 #include <cstring>
 #include <string>
@@ -215,6 +216,11 @@ void test_update_gate() {
     check(doomnet::current_update_notice() == L"A new version is available. It's downloading now.", "the page is not told that a new version is downloading");
     doomnet::publish_update_notice(L"The new version was downloaded. Quit Steam and open it again to use it.");
     check(doomnet::current_update_notice().find(L"downloaded") != std::wstring::npos, "the page is not told when the download finishes");
+    {
+        std::ifstream catalog_source("src/catalog.cpp", std::ios::binary);
+        std::string catalog_text((std::istreambuf_iterator<char>(catalog_source)), std::istreambuf_iterator<char>());
+        check(catalog_text.find("This running copy matches the published update") != std::string::npos && catalog_text.find("This copy is already up to date") == std::string::npos && catalog_text.find("The new version is already on this PC") == std::string::npos, "Check for Updates still says this PC is current when the published list was not read, or when Steam is still running an older file");
+    }
     doomnet::publish_update_notice(L"");
     check(doomnet::installed_host_leaves_when_steam_exits(L"C:\\Users\\Tester\\AppData\\Local\\DoomNet\\DoomNet.exe"), "an installed copy stays running after Steam exits, so the new program never loads");
     check(!doomnet::installed_host_leaves_when_steam_exits(L"D:\\Documents\\Repos\\DoomNet-SteamPortal\\build\\Release\\DoomNet.exe"), "a source tree leaves when Steam exits");
@@ -1200,7 +1206,7 @@ void test_skin_page() {
     check(boot.find("stableSince") != std::string::npos, "boot script no longer waits for the library grid to finish its first pass");
     check(boot.find("wantsPlayer") != std::string::npos, "boot script no longer inserts the player on the Steam window");
     check(boot.find("win.__doomnetStore = window.__doomnetStore") != std::string::npos, "the Steam window does not receive the Store record, so an installed skin is shown as not installed");
-    check(boot.find("20261120-version-1.20.0-queue-order") != std::string::npos && boot.find("20261027-version-1.15.0") == std::string::npos, "Steam still loads the player as version 1.15.0");
+    check(boot.find("20261120-version-1.20.1-update-message") != std::string::npos && boot.find("20261027-version-1.15.0") == std::string::npos, "Steam still loads the player as version 1.15.0");
     check(boot.find("doomnetBindingReady") != std::string::npos && boot.find("if (!doomnetBindingReady)") != std::string::npos, "the boot script still returns before the skin when the binding is already installed");
     check(boot.find("win.__doomnetPartyConfig = window.__doomnetPartyConfig") != std::string::npos && boot.find("win.DoomNetStreamTunes = window.DoomNetStreamTunes") != std::string::npos, "the Steam window does not receive StreamTunes, so the listening-party button never appears");
     check(boot.find("doomnet-steamtunes-tab") != std::string::npos, "boot script does not add a SteamTunes tab");
@@ -1302,7 +1308,7 @@ void test_skin_page() {
               patched_ui.find("Leave the current party before starting one") != std::string::npos &&
               patched_ui.find("startHost && UI.doomnetListenerParty()") != std::string::npos,
           "a listener session does not replace Now Playing or restore the local player on Leave Session");
-    check(patched_ui.find("var PLUGIN_VERSION = \"1.20.0\"") != std::string::npos && patched_ui.find("var PLUGIN_VERSION = \"1.15.0\"") == std::string::npos && patched_ui.find("Start Listening Party") != std::string::npos && patched_ui.find("tagCount") != std::string::npos && patched_ui.find("UI.overlaySearchTimer") != std::string::npos && patched_ui.find("queueReorder: !UI.currentShuffle()") != std::string::npos && patched_ui.find("queueReorder: slice.window === UI.NP_LINEAR_WINDOW") != std::string::npos, "the About version is still 1.19.6, or Up Next can still be reordered while shuffle is on");
+    check(patched_ui.find("var PLUGIN_VERSION = \"1.20.1\"") != std::string::npos && patched_ui.find("var PLUGIN_VERSION = \"1.15.0\"") == std::string::npos && patched_ui.find("Start Listening Party") != std::string::npos && patched_ui.find("tagCount") != std::string::npos && patched_ui.find("UI.overlaySearchTimer") != std::string::npos && patched_ui.find("queueReorder: !UI.currentShuffle()") != std::string::npos && patched_ui.find("queueReorder: slice.window === UI.NP_LINEAR_WINDOW") != std::string::npos, "the About version is still 1.20.0, or Up Next can still be reordered while shuffle is on");
     check(patched_ui.find("text: \"Refresh Metadata\"") != std::string::npos && patched_ui.find("callServer(\"refresh_metadata_batch\"") != std::string::npos && patched_ui.find("callServer(\"refresh_metadata_start\"") != std::string::npos && patched_ui.find("Updating tags ") != std::string::npos && patched_ui.find("invalidateBrowseCache") != std::string::npos && patched_ui.find("does not remove songs, and it does not rebuild covers.") != std::string::npos, "Troubleshooting has no Refresh Metadata button under Regenerate Artwork");
     {
         const std::string stock_sync =
@@ -1316,7 +1322,7 @@ void test_skin_page() {
         const size_t closed = kept.find("end");
         check(stop_copy != std::string::npos && guarded != std::string::npos && returned != std::string::npos && closed != std::string::npos && copy_again != std::string::npos && stop_copy < guarded && guarded < returned && returned < closed && closed < copy_again, "the player still copies version 1.15.0 over the 1.16.0 page");
     }
-    check(doomnet::patched_player_bootstrap_text().find("var ASSET_REV = \"20261120-version-1.20.0-queue-order\"") != std::string::npos && doomnet::patched_player_bootstrap_text().find("20261027-version-1.15.0") == std::string::npos, "the player files are still cached as version 1.15.0");
+    check(doomnet::patched_player_bootstrap_text().find("var ASSET_REV = \"20261120-version-1.20.1-update-message\"") != std::string::npos && doomnet::patched_player_bootstrap_text().find("20261027-version-1.15.0") == std::string::npos, "the player files are still cached as version 1.15.0");
     {
         const std::string refresh_source = "function library.regenerate_artwork()\nreturn library\n";
         const std::string refreshed = doomnet::patched_player_module("library", refresh_source);
