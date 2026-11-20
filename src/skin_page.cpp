@@ -886,10 +886,10 @@ std::string patched_player_bootstrap_text() {
         return {};
     }
     const std::string old_rev = "var ASSET_REV = \"20261027-version-1.15.0\"";
-    const std::string new_rev = "var ASSET_REV = \"20261120-version-1.19.6-overlay-search\"";
+    const std::string new_rev = "var ASSET_REV = \"20261120-version-1.20.0-queue-order\"";
     const size_t at = text.find(old_rev);
     if (at == std::string::npos) {
-        if (text.find("20261120-version-1.19.6-overlay-search") == std::string::npos) {
+        if (text.find("20261120-version-1.20.0-queue-order") == std::string::npos) {
             log_event(L"warn", L"inject", L"The player loader still uses version 1.15.0, so Steam can keep showing the old page.");
         }
     } else {
@@ -913,7 +913,7 @@ std::string patched_player_ui_text() {
     }
     ui.swap(normalized);
     const std::string old_plugin_version = "var PLUGIN_VERSION = \"1.15.0\"";
-    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.19.6\"";
+    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.20.0\"";
     for (size_t at = 0; (at = ui.find(old_plugin_version, at)) != std::string::npos; at += new_plugin_version.size()) {
         ui.replace(at, old_plugin_version.size(), new_plugin_version);
     }
@@ -3279,6 +3279,112 @@ std::string patched_player_ui_text() {
         ui.replace(playing_row_at, old_playing_row.size(), new_playing_row);
     } else {
         log_event(L"warn", L"inject", L"The player UI did not mark the playing song, so the accent stays on the song that was playing when the list was drawn.");
+    }
+    const std::string old_queue_drag =
+        "\t\t\tif (opts.queueEdit) {\n"
+        "\t\t\t\trow.setAttribute(\"draggable\", \"true\");\n";
+    const std::string new_queue_drag =
+        "\t\t\tif (opts.queueReorder) {\n"
+        "\t\t\t\trow.setAttribute(\"draggable\", \"true\");\n";
+    const size_t queue_drag_at = ui.find(old_queue_drag);
+    if (queue_drag_at != std::string::npos) {
+        ui.replace(queue_drag_at, old_queue_drag.size(), new_queue_drag);
+    } else {
+        log_event(L"warn", L"inject", L"The player UI did not let an Up Next row be dragged, so the queue cannot be reordered while shuffle is off.");
+    }
+    const std::string old_queue_move =
+        "\t\t\tif (opts.queueEdit) {\n"
+        "\t\t\t\tvar upBtn = el(\"button\", \"smp-btn-small smp-btn-iconish\", { text: \"\\u2191\", type: \"button\", title: \"Move Up\" });\n"
+        "\t\t\t\tupBtn.disabled = idx === 0;\n"
+        "\t\t\t\tupBtn.addEventListener(\"click\", function (event) {\n"
+        "\t\t\t\t\tevent.stopPropagation();\n"
+        "\t\t\t\t\tEngine.applyCommand({ action: \"moveQueue\", fromIndex: idx, toIndex: idx - 1 });\n"
+        "\t\t\t\t});\n"
+        "\t\t\t\tvar downBtn = el(\"button\", \"smp-btn-small smp-btn-iconish\", { text: \"\\u2193\", type: \"button\", title: \"Move Down\" });\n"
+        "\t\t\t\tvar trackCount = (tracks && tracks.length) || Number(opts.queueLength) || 0;\n"
+        "\t\t\t\tdownBtn.disabled = idx >= trackCount - 1;\n"
+        "\t\t\t\tdownBtn.addEventListener(\"click\", function (event) {\n"
+        "\t\t\t\t\tevent.stopPropagation();\n"
+        "\t\t\t\t\tEngine.applyCommand({ action: \"moveQueue\", fromIndex: idx, toIndex: idx + 1 });\n"
+        "\t\t\t\t});\n"
+        "\t\t\t\tvar removeBtn = el(\"button\", \"smp-btn-small smp-btn-iconish smp-btn-danger\", {\n"
+        "\t\t\t\t\ttext: \"\\u00D7\",\n"
+        "\t\t\t\t\ttype: \"button\",\n"
+        "\t\t\t\t\ttitle: \"Remove\",\n"
+        "\t\t\t\t});\n"
+        "\t\t\t\tremoveBtn.addEventListener(\"click\", function (event) {\n"
+        "\t\t\t\t\tevent.stopPropagation();\n"
+        "\t\t\t\t\tEngine.applyCommand({ action: \"removeFromQueue\", value: idx });\n"
+        "\t\t\t\t});\n"
+        "\t\t\t\tactions.appendChild(upBtn);\n"
+        "\t\t\t\tactions.appendChild(downBtn);\n"
+        "\t\t\t\tactions.appendChild(removeBtn);\n"
+        "\t\t\t}\n";
+    const std::string new_queue_move =
+        "\t\t\tif (opts.queueReorder) {\n"
+        "\t\t\t\tvar upBtn = el(\"button\", \"smp-btn-small smp-btn-iconish\", { text: \"\\u2191\", type: \"button\", title: \"Move Up\" });\n"
+        "\t\t\t\tupBtn.disabled = idx === 0;\n"
+        "\t\t\t\tupBtn.addEventListener(\"click\", function (event) {\n"
+        "\t\t\t\t\tevent.stopPropagation();\n"
+        "\t\t\t\t\tEngine.applyCommand({ action: \"moveQueue\", fromIndex: idx, toIndex: idx - 1 });\n"
+        "\t\t\t\t});\n"
+        "\t\t\t\tvar downBtn = el(\"button\", \"smp-btn-small smp-btn-iconish\", { text: \"\\u2193\", type: \"button\", title: \"Move Down\" });\n"
+        "\t\t\t\tvar trackCount = (tracks && tracks.length) || Number(opts.queueLength) || 0;\n"
+        "\t\t\t\tdownBtn.disabled = idx >= trackCount - 1;\n"
+        "\t\t\t\tdownBtn.addEventListener(\"click\", function (event) {\n"
+        "\t\t\t\t\tevent.stopPropagation();\n"
+        "\t\t\t\t\tEngine.applyCommand({ action: \"moveQueue\", fromIndex: idx, toIndex: idx + 1 });\n"
+        "\t\t\t\t});\n"
+        "\t\t\t\tactions.appendChild(upBtn);\n"
+        "\t\t\t\tactions.appendChild(downBtn);\n"
+        "\t\t\t}\n"
+        "\t\t\tif (opts.queueEdit) {\n"
+        "\t\t\t\tvar removeBtn = el(\"button\", \"smp-btn-small smp-btn-iconish smp-btn-danger\", {\n"
+        "\t\t\t\t\ttext: \"\\u00D7\",\n"
+        "\t\t\t\t\ttype: \"button\",\n"
+        "\t\t\t\t\ttitle: \"Remove\",\n"
+        "\t\t\t\t});\n"
+        "\t\t\t\tremoveBtn.addEventListener(\"click\", function (event) {\n"
+        "\t\t\t\t\tevent.stopPropagation();\n"
+        "\t\t\t\t\tEngine.applyCommand({ action: \"removeFromQueue\", value: idx });\n"
+        "\t\t\t\t});\n"
+        "\t\t\t\tactions.appendChild(removeBtn);\n"
+        "\t\t\t}\n";
+    const size_t queue_move_at = ui.find(old_queue_move);
+    if (queue_move_at != std::string::npos) {
+        ui.replace(queue_move_at, old_queue_move.size(), new_queue_move);
+    } else {
+        log_event(L"warn", L"inject", L"The player UI did not put Move Up and Move Down on an Up Next row, so the queue cannot be reordered while shuffle is off.");
+    }
+    const std::string old_preview_edit =
+        "\t\t\t\t\t\tplayQueueIndex: true,\n"
+        "\t\t\t\t\t\tqueueEdit: false,\n"
+        "\t\t\t\t\t\tqueueLength: total,\n";
+    const std::string new_preview_edit =
+        "\t\t\t\t\t\tplayQueueIndex: true,\n"
+        "\t\t\t\t\t\tqueueEdit: false,\n"
+        "\t\t\t\t\t\tqueueReorder: slice.window === UI.NP_LINEAR_WINDOW,\n"
+        "\t\t\t\t\t\tqueueLength: total,\n";
+    const size_t preview_edit_at = ui.find(old_preview_edit);
+    if (preview_edit_at != std::string::npos) {
+        ui.replace(preview_edit_at, old_preview_edit.size(), new_preview_edit);
+    } else {
+        log_event(L"warn", L"inject", L"The player UI did not list the upcoming songs, so a long queue still cannot be reordered while shuffle is off.");
+    }
+    const std::string old_full_edit =
+        "\t\t\t\t\t\tplayQueueIndex: true,\n"
+        "\t\t\t\t\t\tqueueEdit: true,\n"
+        "\t\t\t\t\t\tqueueLength: queueIds.length,\n";
+    const std::string new_full_edit =
+        "\t\t\t\t\t\tplayQueueIndex: true,\n"
+        "\t\t\t\t\t\tqueueEdit: true,\n"
+        "\t\t\t\t\t\tqueueReorder: !UI.currentShuffle(),\n"
+        "\t\t\t\t\t\tqueueLength: queueIds.length,\n";
+    const size_t full_edit_at = ui.find(old_full_edit);
+    if (full_edit_at != std::string::npos) {
+        ui.replace(full_edit_at, old_full_edit.size(), new_full_edit);
+    } else {
+        log_event(L"warn", L"inject", L"The player UI did not list the full Up Next queue, so those songs cannot be reordered while shuffle is off.");
     }
     const std::string old_paint_playing =
         "\t\tpaintPlaybackUi: function () {\n"
