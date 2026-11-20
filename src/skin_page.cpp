@@ -886,10 +886,10 @@ std::string patched_player_bootstrap_text() {
         return {};
     }
     const std::string old_rev = "var ASSET_REV = \"20261027-version-1.15.0\"";
-    const std::string new_rev = "var ASSET_REV = \"20261112-version-1.19.5-every-cover\"";
+    const std::string new_rev = "var ASSET_REV = \"20261120-version-1.19.6-overlay-search\"";
     const size_t at = text.find(old_rev);
     if (at == std::string::npos) {
-        if (text.find("20261112-version-1.19.5-every-cover") == std::string::npos) {
+        if (text.find("20261120-version-1.19.6-overlay-search") == std::string::npos) {
             log_event(L"warn", L"inject", L"The player loader still uses version 1.15.0, so Steam can keep showing the old page.");
         }
     } else {
@@ -913,7 +913,7 @@ std::string patched_player_ui_text() {
     }
     ui.swap(normalized);
     const std::string old_plugin_version = "var PLUGIN_VERSION = \"1.15.0\"";
-    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.19.5\"";
+    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.19.6\"";
     for (size_t at = 0; (at = ui.find(old_plugin_version, at)) != std::string::npos; at += new_plugin_version.size()) {
         ui.replace(at, old_plugin_version.size(), new_plugin_version);
     }
@@ -1280,6 +1280,119 @@ std::string patched_player_ui_text() {
         ui.replace(commit_search_at, old_commit_search.size(), new_commit_search);
     } else {
         log_event(L"warn", L"inject", L"The player UI did not commit a library search, so a party page stays in front of the search results.");
+    }
+    const std::string old_overlay_search =
+        "\t\t\tvar search = root.querySelector(\".smp-search\");\n"
+        "\t\t\tsearch.title = \"Press Enter to search\";\n"
+        "\t\t\tsearch.addEventListener(\"keydown\", function (event) {\n"
+        "\t\t\t\tUI.beginSearchHold();\n"
+        "\t\t\t\tif (event.isComposing || event.keyCode === 229) {\n"
+        "\t\t\t\t\treturn;\n"
+        "\t\t\t\t}\n"
+        "\t\t\t\tif (event.key !== \"Enter\" && event.keyCode !== 13) {\n"
+        "\t\t\t\t\treturn;\n"
+        "\t\t\t\t}\n"
+        "\t\t\t\tevent.preventDefault();\n"
+        "\t\t\t\tUI.commitSearch();\n"
+        "\t\t\t});\n"
+        "\t\t\tsearch.addEventListener(\"input\", function (event) {\n"
+        "\t\t\t\tevent.stopPropagation();\n"
+        "\t\t\t\tif (String(search.value || \"\").toLowerCase() === String(UI.searchQuery || \"\")) {\n"
+        "\t\t\t\t\treturn;\n"
+        "\t\t\t\t}\n"
+        "\t\t\t\tUI.beginSearchHold();\n"
+        "\t\t\t});\n"
+        "\t\t\tsearch.addEventListener(\"focus\", function () {\n"
+        "\t\t\t\tUI.beginSearchHold();\n"
+        "\t\t\t});\n"
+        "\t\t\tsearch.addEventListener(\"blur\", function () {\n"
+        "\t\t\t\tUI.endSearchHold();\n"
+        "\t\t\t});\n";
+    const std::string new_overlay_search =
+        "\t\t\tvar search = root.querySelector(\".smp-search\");\n"
+        "\t\t\tvar overlaySearch = document.documentElement.classList.contains(\"smp-ctx-overlay\");\n"
+        "\t\t\tsearch.title = overlaySearch ? \"Search library\" : \"Press Enter to search\";\n"
+        "\t\t\tfunction queueOverlaySearch() {\n"
+        "\t\t\t\tif (!overlaySearch) {\n"
+        "\t\t\t\t\treturn;\n"
+        "\t\t\t\t}\n"
+        "\t\t\t\tclearTimeout(UI.overlaySearchTimer);\n"
+        "\t\t\t\tUI.overlaySearchTimer = setTimeout(function () {\n"
+        "\t\t\t\t\tUI.commitSearch();\n"
+        "\t\t\t\t}, 200);\n"
+        "\t\t\t}\n"
+        "\t\t\tsearch.addEventListener(\"keydown\", function (event) {\n"
+        "\t\t\t\tUI.beginSearchHold();\n"
+        "\t\t\t\tif (event.isComposing || event.keyCode === 229) {\n"
+        "\t\t\t\t\treturn;\n"
+        "\t\t\t\t}\n"
+        "\t\t\t\tif (event.key !== \"Enter\" && event.keyCode !== 13) {\n"
+        "\t\t\t\t\treturn;\n"
+        "\t\t\t\t}\n"
+        "\t\t\t\tevent.preventDefault();\n"
+        "\t\t\t\tclearTimeout(UI.overlaySearchTimer);\n"
+        "\t\t\t\tUI.commitSearch();\n"
+        "\t\t\t});\n"
+        "\t\t\tsearch.addEventListener(\"input\", function (event) {\n"
+        "\t\t\t\tevent.stopPropagation();\n"
+        "\t\t\t\tif (String(search.value || \"\").toLowerCase() === String(UI.searchQuery || \"\")) {\n"
+        "\t\t\t\t\treturn;\n"
+        "\t\t\t\t}\n"
+        "\t\t\t\tUI.beginSearchHold();\n"
+        "\t\t\t\tqueueOverlaySearch();\n"
+        "\t\t\t});\n"
+        "\t\t\tsearch.addEventListener(\"mousedown\", function (event) {\n"
+        "\t\t\t\tif (overlaySearch) {\n"
+        "\t\t\t\t\tevent.stopPropagation();\n"
+        "\t\t\t\t}\n"
+        "\t\t\t});\n"
+        "\t\t\tsearch.addEventListener(\"focus\", function () {\n"
+        "\t\t\t\tUI.beginSearchHold();\n"
+        "\t\t\t});\n"
+        "\t\t\tsearch.addEventListener(\"blur\", function () {\n"
+        "\t\t\t\tif (overlaySearch) {\n"
+        "\t\t\t\t\tclearTimeout(UI.overlaySearchTimer);\n"
+        "\t\t\t\t\tUI.commitSearch();\n"
+        "\t\t\t\t}\n"
+        "\t\t\t\tUI.endSearchHold();\n"
+        "\t\t\t});\n"
+        "\t\t\tif (overlaySearch) {\n"
+        "\t\t\t\tdocument.addEventListener(\"keydown\", function (event) {\n"
+        "\t\t\t\t\tif (document.activeElement !== search || event.target === search) {\n"
+        "\t\t\t\t\t\treturn;\n"
+        "\t\t\t\t\t}\n"
+        "\t\t\t\t\tif (event.metaKey || event.ctrlKey || event.altKey || event.isComposing) {\n"
+        "\t\t\t\t\t\treturn;\n"
+        "\t\t\t\t\t}\n"
+        "\t\t\t\t\tvar key = event.key || \"\";\n"
+        "\t\t\t\t\tvar code = event.keyCode || event.which || 0;\n"
+        "\t\t\t\t\tif (key === \"Enter\" || code === 13) {\n"
+        "\t\t\t\t\t\tevent.preventDefault();\n"
+        "\t\t\t\t\t\tclearTimeout(UI.overlaySearchTimer);\n"
+        "\t\t\t\t\t\tUI.commitSearch();\n"
+        "\t\t\t\t\t\treturn;\n"
+        "\t\t\t\t\t}\n"
+        "\t\t\t\t\tif (key === \"Backspace\") {\n"
+        "\t\t\t\t\t\tevent.preventDefault();\n"
+        "\t\t\t\t\t\tsearch.value = String(search.value || \"\").slice(0, -1);\n"
+        "\t\t\t\t\t\tUI.beginSearchHold();\n"
+        "\t\t\t\t\t\tqueueOverlaySearch();\n"
+        "\t\t\t\t\t\treturn;\n"
+        "\t\t\t\t\t}\n"
+        "\t\t\t\t\tif (!key || key.length !== 1) {\n"
+        "\t\t\t\t\t\treturn;\n"
+        "\t\t\t\t\t}\n"
+        "\t\t\t\t\tevent.preventDefault();\n"
+        "\t\t\t\t\tsearch.value = String(search.value || \"\") + key;\n"
+        "\t\t\t\t\tUI.beginSearchHold();\n"
+        "\t\t\t\t\tqueueOverlaySearch();\n"
+        "\t\t\t\t}, true);\n"
+        "\t\t\t}\n";
+    const size_t overlay_search_at = ui.find(old_overlay_search);
+    if (overlay_search_at != std::string::npos) {
+        ui.replace(overlay_search_at, old_overlay_search.size(), new_overlay_search);
+    } else {
+        log_event(L"warn", L"inject", L"The player UI did not attach the library search box, so the overlay mini player still waits for an Enter key it never receives.");
     }
 
     const std::string old_library_label =
@@ -5415,6 +5528,7 @@ std::string patched_player_css_text() {
         "html.smp-ctx-overlay .smp-settings-slider{flex:1 1 auto;width:auto;min-width:0;max-width:none;}\n"
         "html.smp-ctx-overlay .smp-settings-readout{flex:0 0 7ch;width:7ch;min-width:7ch;max-width:7ch;}\n"
         "html.smp-ctx-overlay .smp-hint{margin-top:6px;}\n"
+        "html.smp-ctx-overlay .smp-search{pointer-events:auto !important;-webkit-user-select:text;user-select:text;position:relative;z-index:5;min-width:120px;flex:1 1 140px;}\n"
         "html.smp-ctx-overlay .smp-launcher,html.smp-ctx-overlay .smp-overlay-widget{bottom:4.5vh !important;}\n"
         "html.smp-ctx-overlay .smp-panel{bottom:calc(4.5vh + 64px) !important;}\n"
         ".smp-select{flex:0 1 360px;width:360px;max-width:min(360px,100%);}\n"
