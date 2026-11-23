@@ -886,10 +886,10 @@ std::string patched_player_bootstrap_text() {
         return {};
     }
     const std::string old_rev = "var ASSET_REV = \"20261027-version-1.15.0\"";
-    const std::string new_rev = "var ASSET_REV = \"20261123-version-1.25.1-artist-eye-tip\"";
+    const std::string new_rev = "var ASSET_REV = \"20261123-version-1.25.2-nowplaying-eye-tip\"";
     const size_t at = text.find(old_rev);
     if (at == std::string::npos) {
-        if (text.find("20261123-version-1.25.1-artist-eye-tip") == std::string::npos) {
+        if (text.find("20261123-version-1.25.2-nowplaying-eye-tip") == std::string::npos) {
             log_event(L"warn", L"inject", L"The player loader still uses version 1.15.0, so Steam can keep showing the old page.");
         }
     } else {
@@ -913,7 +913,7 @@ std::string patched_player_ui_text() {
     }
     ui.swap(normalized);
     const std::string old_plugin_version = "var PLUGIN_VERSION = \"1.15.0\"";
-    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.25.1\"";
+    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.25.2\"";
     for (size_t at = 0; (at = ui.find(old_plugin_version, at)) != std::string::npos; at += new_plugin_version.size()) {
         ui.replace(at, old_plugin_version.size(), new_plugin_version);
     }
@@ -2469,7 +2469,8 @@ std::string patched_player_ui_text() {
         "\t\t\t\t? '<svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" aria-hidden=\"true\"><path fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" d=\"M2.5 12S6 6.5 12 6.5 21.5 12 21.5 12 18 17.5 12 17.5 2.5 12 2.5 12z\"/><circle fill=\"currentColor\" cx=\"12\" cy=\"12\" r=\"2.2\"/></svg>'\n"
         "\t\t\t\t: '<svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" aria-hidden=\"true\"><path fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" d=\"M3 14c2.6-4.2 5.6-6.2 9-6.2s6.4 2 9 6.2\"/><path fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" d=\"M7 16.2c1.5.9 3.1 1.4 5 1.4s3.5-.5 5-1.4\"/></svg>';\n"
         "\t\t\tbtn.setAttribute(\"aria-pressed\", shown ? \"true\" : \"false\");\n"
-        "\t\t\tbtn.setAttribute(\"aria-label\", shown ? \"Hide equalizer and lyrics\" : \"Show equalizer and lyrics\");\n"
+        "\t\t\tbtn.setAttribute(\"aria-label\", shown ? \"Hide extra options for Now Playing\" : \"Show extra options for Now Playing\");\n"
+        "\t\t\tbtn.title = \"Show or hide extra options for Now Playing.\";\n"
         "\t\t},\n"
         "\n"
         "\t\tdoomnetApplyFlankVisibility: function (wrap) {\n"
