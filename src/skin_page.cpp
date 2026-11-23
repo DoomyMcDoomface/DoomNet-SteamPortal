@@ -886,10 +886,10 @@ std::string patched_player_bootstrap_text() {
         return {};
     }
     const std::string old_rev = "var ASSET_REV = \"20261027-version-1.15.0\"";
-    const std::string new_rev = "var ASSET_REV = \"20261123-version-1.25.2-nowplaying-eye-tip\"";
+    const std::string new_rev = "var ASSET_REV = \"20261123-version-1.25.3-eye-defaults\"";
     const size_t at = text.find(old_rev);
     if (at == std::string::npos) {
-        if (text.find("20261123-version-1.25.2-nowplaying-eye-tip") == std::string::npos) {
+        if (text.find("20261123-version-1.25.3-eye-defaults") == std::string::npos) {
             log_event(L"warn", L"inject", L"The player loader still uses version 1.15.0, so Steam can keep showing the old page.");
         }
     } else {
@@ -913,7 +913,7 @@ std::string patched_player_ui_text() {
     }
     ui.swap(normalized);
     const std::string old_plugin_version = "var PLUGIN_VERSION = \"1.15.0\"";
-    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.25.2\"";
+    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.25.3\"";
     for (size_t at = 0; (at = ui.find(old_plugin_version, at)) != std::string::npos; at += new_plugin_version.size()) {
         ui.replace(at, old_plugin_version.size(), new_plugin_version);
     }
@@ -3862,12 +3862,12 @@ std::string patched_player_ui_text() {
         "\t\t\t\tvar artistEye = el(\"button\", \"doomnet-artist-eye\", { type: \"button\" });\n"
         "\t\t\t\tfunction artistExtrasShown() {\n"
         "\t\t\t\t\tif (UI._doomnetArtistExtrasShown == null) {\n"
-        "\t\t\t\t\t\tUI._doomnetArtistExtrasShown = true;\n"
+        "\t\t\t\t\t\tUI._doomnetArtistExtrasShown = false;\n"
         "\t\t\t\t\t\ttry {\n"
-        "\t\t\t\t\t\t\tUI._doomnetArtistExtrasShown = window.localStorage.getItem(\"smp-artist-extras-shown\") !== \"0\";\n"
+        "\t\t\t\t\t\t\tUI._doomnetArtistExtrasShown = window.localStorage.getItem(\"smp-artist-extras-shown\") === \"1\";\n"
         "\t\t\t\t\t\t} catch (e) {}\n"
         "\t\t\t\t\t}\n"
-        "\t\t\t\t\treturn UI._doomnetArtistExtrasShown !== false;\n"
+        "\t\t\t\t\treturn UI._doomnetArtistExtrasShown === true;\n"
         "\t\t\t\t}\n"
         "\t\t\t\tfunction paintArtistEye(shown) {\n"
         "\t\t\t\t\tartistEye.innerHTML = shown\n"
