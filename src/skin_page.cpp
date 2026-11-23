@@ -886,10 +886,10 @@ std::string patched_player_bootstrap_text() {
         return {};
     }
     const std::string old_rev = "var ASSET_REV = \"20261027-version-1.15.0\"";
-    const std::string new_rev = "var ASSET_REV = \"20261123-version-1.25.3-eye-defaults\"";
+    const std::string new_rev = "var ASSET_REV = \"20261123-version-1.25.4-eye-labels\"";
     const size_t at = text.find(old_rev);
     if (at == std::string::npos) {
-        if (text.find("20261123-version-1.25.3-eye-defaults") == std::string::npos) {
+        if (text.find("20261123-version-1.25.4-eye-labels") == std::string::npos) {
             log_event(L"warn", L"inject", L"The player loader still uses version 1.15.0, so Steam can keep showing the old page.");
         }
     } else {
@@ -913,7 +913,7 @@ std::string patched_player_ui_text() {
     }
     ui.swap(normalized);
     const std::string old_plugin_version = "var PLUGIN_VERSION = \"1.15.0\"";
-    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.25.3\"";
+    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.25.4\"";
     for (size_t at = 0; (at = ui.find(old_plugin_version, at)) != std::string::npos; at += new_plugin_version.size()) {
         ui.replace(at, old_plugin_version.size(), new_plugin_version);
     }
@@ -2469,8 +2469,8 @@ std::string patched_player_ui_text() {
         "\t\t\t\t? '<svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" aria-hidden=\"true\"><path fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" d=\"M2.5 12S6 6.5 12 6.5 21.5 12 21.5 12 18 17.5 12 17.5 2.5 12 2.5 12z\"/><circle fill=\"currentColor\" cx=\"12\" cy=\"12\" r=\"2.2\"/></svg>'\n"
         "\t\t\t\t: '<svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" aria-hidden=\"true\"><path fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" d=\"M3 14c2.6-4.2 5.6-6.2 9-6.2s6.4 2 9 6.2\"/><path fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" d=\"M7 16.2c1.5.9 3.1 1.4 5 1.4s3.5-.5 5-1.4\"/></svg>';\n"
         "\t\t\tbtn.setAttribute(\"aria-pressed\", shown ? \"true\" : \"false\");\n"
-        "\t\t\tbtn.setAttribute(\"aria-label\", shown ? \"Hide extra options for Now Playing\" : \"Show extra options for Now Playing\");\n"
-        "\t\t\tbtn.title = \"Show or hide extra options for Now Playing.\";\n"
+        "\t\t\tbtn.setAttribute(\"aria-label\", \"Show/Hide Extra Options For Now Playing\");\n"
+        "\t\t\tbtn.setAttribute(\"data-tip\", \"Show/Hide Extra Options For Now Playing\");\n"
         "\t\t},\n"
         "\n"
         "\t\tdoomnetApplyFlankVisibility: function (wrap) {\n"
@@ -3874,8 +3874,8 @@ std::string patched_player_ui_text() {
         "\t\t\t\t\t\t? '<svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" aria-hidden=\"true\"><path fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" d=\"M2.5 12S6 6.5 12 6.5 21.5 12 21.5 12 18 17.5 12 17.5 2.5 12 2.5 12z\"/><circle fill=\"currentColor\" cx=\"12\" cy=\"12\" r=\"2.2\"/></svg>'\n"
         "\t\t\t\t\t\t: '<svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" aria-hidden=\"true\"><path fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" d=\"M3 14c2.6-4.2 5.6-6.2 9-6.2s6.4 2 9 6.2\"/><path fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" d=\"M7 16.2c1.5.9 3.1 1.4 5 1.4s3.5-.5 5-1.4\"/></svg>';\n"
         "\t\t\t\t\tartistEye.setAttribute(\"aria-pressed\", shown ? \"true\" : \"false\");\n"
-        "\t\t\t\t\tartistEye.setAttribute(\"aria-label\", shown ? \"Hide extra options for this artist\" : \"Show extra options for this artist\");\n"
-        "\t\t\t\t\tartistEye.title = \"Show or hide extra options for this artist.\";\n"
+        "\t\t\t\t\tartistEye.setAttribute(\"aria-label\", \"Show/Hide Extra Options For This Artist\");\n"
+        "\t\t\t\t\tartistEye.setAttribute(\"data-tip\", \"Show/Hide Extra Options For This Artist\");\n"
         "\t\t\t\t}\n"
         "\t\t\t\tfunction applyArtistExtras() {\n"
         "\t\t\t\t\tvar shown = artistExtrasShown();\n"
@@ -6088,10 +6088,12 @@ std::string patched_player_css_text() {
         "\n.smp-view-library .smp-drill-bar{position:relative;z-index:8;}"
         "\n.smp-drill-bar .smp-artist-queue-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:8px;margin-left:auto;flex:0 1 auto;overflow:visible;max-width:none;white-space:normal;}"
         "\n.smp-drill-bar .smp-artist-queue-actions .smp-btn{margin:0;flex:0 0 auto;}"
-        "\n.smp-drill-bar .smp-drill-title:has(.doomnet-artist-eye){display:flex;align-items:center;gap:6px;}"
+        "\n.smp-drill-bar .smp-drill-title:has(.doomnet-artist-eye){display:flex;align-items:center;gap:6px;overflow:visible;}"
         "\n.doomnet-artist-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}"
         "\n.doomnet-artist-eye{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;margin:0;padding:0;border:0;background:transparent;color:var(--smp-accent);cursor:pointer;flex:0 0 auto;}"
         "\n.doomnet-artist-eye svg{display:block;}"
+        "\n.doomnet-artist-eye::after,#doomnet-steamtunes-host .doomnet-flank-eye::after{content:attr(data-tip);position:absolute;left:0;top:calc(100% + 6px);z-index:30;display:none;padding:6px 8px;border-radius:3px;background:var(--smp-bg-panel,#1b1c1f);border:1px solid var(--smp-border,rgba(255,255,255,0.14));color:var(--smp-text,#fff);font:500 12px/1.3 \"Motiva Sans\",Arial,sans-serif;white-space:nowrap;pointer-events:none;box-shadow:0 8px 24px rgba(0,0,0,0.45);}"
+        "\n.doomnet-artist-eye:hover::after,#doomnet-steamtunes-host .doomnet-flank-eye:hover::after{display:block;}"
         "\n.smp-artist-queue-actions.doomnet-artist-extras-off .doomnet-artist-extra{display:none;}"
         "\n.smp-drill-bar .smp-artist-order{position:relative;margin:0;flex:0 0 auto;}"
         "\n.smp-artist-order-btn{margin:0;height:28px;min-height:28px;padding:0 22px 0 10px;border-radius:3px;border:1px solid var(--smp-border);background:var(--smp-bg-panel);color:var(--smp-text);font:inherit;font-size:12px;cursor:pointer;position:relative;}"
