@@ -886,10 +886,10 @@ std::string patched_player_bootstrap_text() {
         return {};
     }
     const std::string old_rev = "var ASSET_REV = \"20261027-version-1.15.0\"";
-    const std::string new_rev = "var ASSET_REV = \"20261123-version-1.21.0-artist-queue\"";
+    const std::string new_rev = "var ASSET_REV = \"20261123-version-1.21.1-artist-replace\"";
     const size_t at = text.find(old_rev);
     if (at == std::string::npos) {
-        if (text.find("20261123-version-1.21.0-artist-queue") == std::string::npos) {
+        if (text.find("20261123-version-1.21.1-artist-replace") == std::string::npos) {
             log_event(L"warn", L"inject", L"The player loader still uses version 1.15.0, so Steam can keep showing the old page.");
         }
     } else {
@@ -913,7 +913,7 @@ std::string patched_player_ui_text() {
     }
     ui.swap(normalized);
     const std::string old_plugin_version = "var PLUGIN_VERSION = \"1.15.0\"";
-    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.21.0\"";
+    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.21.1\"";
     for (size_t at = 0; (at = ui.find(old_plugin_version, at)) != std::string::npos; at += new_plugin_version.size()) {
         ui.replace(at, old_plugin_version.size(), new_plugin_version);
     }
@@ -3394,8 +3394,8 @@ std::string patched_player_ui_text() {
         "\t\trenderArtistAlbums: function (view, tracks) {\n"
         "\t\t\tvar artist = UI.libraryDrill.artist;\n"
         "\t\t\tvar artistQueueActions = el(\"div\", \"smp-artist-queue-actions\");\n"
-        "\t\t\tvar playArtistBtn = el(\"button\", \"smp-btn\", { type: \"button\", text: \"Play All\", title: \"Add every album by this artist to the queue\" });\n"
-        "\t\t\tvar shuffleArtistBtn = el(\"button\", \"smp-btn\", { type: \"button\", text: \"Shuffle Artist\", title: \"Add every album by this artist to the queue and turn shuffle on\" });\n"
+        "\t\t\tvar playArtistBtn = el(\"button\", \"smp-btn\", { type: \"button\", text: \"Play All\", title: \"Replace the queue with this artist's albums, from the first album to the last\" });\n"
+        "\t\t\tvar shuffleArtistBtn = el(\"button\", \"smp-btn\", { type: \"button\", text: \"Shuffle Artist\", title: \"Replace the queue with this artist's songs in a random order\" });\n"
         "\t\t\tfunction tracksForArtistAlbums() {\n"
         "\t\t\t\tvar pageKey = \"artistAlbums:\" + artist;\n"
         "\t\t\t\tvar page = UI.browseCache.pages && UI.browseCache.pages[pageKey];\n"
@@ -3410,21 +3410,35 @@ std::string patched_player_ui_text() {
         "\t\t\t\t});\n"
         "\t\t\t\treturn collected;\n"
         "\t\t\t}\n"
+        "\t\t\tfunction shuffledArtistTracks(list) {\n"
+        "\t\t\t\tvar copy = list.slice();\n"
+        "\t\t\t\tvar i;\n"
+        "\t\t\t\tfor (i = copy.length - 1; i > 0; i--) {\n"
+        "\t\t\t\t\tvar j = Math.floor(Math.random() * (i + 1));\n"
+        "\t\t\t\t\tvar tmp = copy[i];\n"
+        "\t\t\t\t\tcopy[i] = copy[j];\n"
+        "\t\t\t\t\tcopy[j] = tmp;\n"
+        "\t\t\t\t}\n"
+        "\t\t\t\treturn copy;\n"
+        "\t\t\t}\n"
         "\t\t\tplayArtistBtn.addEventListener(\"click\", function () {\n"
         "\t\t\t\tvar artistTracks = tracksForArtistAlbums();\n"
         "\t\t\t\tif (!artistTracks.length) {\n"
         "\t\t\t\t\tUI.showToast(\"Nothing to play for this artist.\");\n"
         "\t\t\t\t\treturn;\n"
         "\t\t\t\t}\n"
-        "\t\t\t\tUI.enqueueTracks(artistTracks);\n"
+        "\t\t\t\tif (UI.currentShuffle()) {\n"
+        "\t\t\t\t\tEngine.applyCommand({ action: \"shuffle\", value: false });\n"
+        "\t\t\t\t}\n"
+        "\t\t\t\tUI.playTracks(artistTracks, 0);\n"
         "\t\t\t});\n"
         "\t\t\tshuffleArtistBtn.addEventListener(\"click\", function () {\n"
-        "\t\t\t\tvar artistTracks = tracksForArtistAlbums();\n"
+        "\t\t\t\tvar artistTracks = shuffledArtistTracks(tracksForArtistAlbums());\n"
         "\t\t\t\tif (!artistTracks.length) {\n"
         "\t\t\t\t\tUI.showToast(\"Nothing to play for this artist.\");\n"
         "\t\t\t\t\treturn;\n"
         "\t\t\t\t}\n"
-        "\t\t\t\tUI.enqueueTracks(artistTracks);\n"
+        "\t\t\t\tUI.playTracks(artistTracks, 0);\n"
         "\t\t\t\tif (!UI.currentShuffle()) {\n"
         "\t\t\t\t\tEngine.applyCommand({ action: \"shuffle\", value: true });\n"
         "\t\t\t\t}\n"
