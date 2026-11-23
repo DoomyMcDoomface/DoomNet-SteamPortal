@@ -886,10 +886,10 @@ std::string patched_player_bootstrap_text() {
         return {};
     }
     const std::string old_rev = "var ASSET_REV = \"20261027-version-1.15.0\"";
-    const std::string new_rev = "var ASSET_REV = \"20261123-version-1.22.0-artist-order\"";
+    const std::string new_rev = "var ASSET_REV = \"20261123-version-1.22.1-artist-drag\"";
     const size_t at = text.find(old_rev);
     if (at == std::string::npos) {
-        if (text.find("20261123-version-1.22.0-artist-order") == std::string::npos) {
+        if (text.find("20261123-version-1.22.1-artist-drag") == std::string::npos) {
             log_event(L"warn", L"inject", L"The player loader still uses version 1.15.0, so Steam can keep showing the old page.");
         }
     } else {
@@ -913,7 +913,7 @@ std::string patched_player_ui_text() {
     }
     ui.swap(normalized);
     const std::string old_plugin_version = "var PLUGIN_VERSION = \"1.15.0\"";
-    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.22.0\"";
+    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.22.1\"";
     for (size_t at = 0; (at = ui.find(old_plugin_version, at)) != std::string::npos; at += new_plugin_version.size()) {
         ui.replace(at, old_plugin_version.size(), new_plugin_version);
     }
@@ -3520,6 +3520,35 @@ std::string patched_player_ui_text() {
         "\t\t\t\tUI.resetBrowseWindow(page);\n"
         "\t\t\t\tUI.updateBrowseWindow(pageKey);\n"
         "\t\t\t}\n"
+        "\t\t\tfunction artistAlbumIndexAt(page, grid, clientX, clientY) {\n"
+        "\t\t\t\tif (!page || !grid || !page.cards || !page.cards.length) {\n"
+        "\t\t\t\t\treturn -1;\n"
+        "\t\t\t\t}\n"
+        "\t\t\t\tvar pane = UI.libraryScrollEl() || grid.parentNode;\n"
+        "\t\t\t\tvar metrics = UI.browseGridMetrics(pane, page);\n"
+        "\t\t\t\tvar rect = grid.getBoundingClientRect();\n"
+        "\t\t\t\tvar x = clientX - rect.left;\n"
+        "\t\t\t\tvar y = clientY - rect.top;\n"
+        "\t\t\t\tvar stride = metrics.cardW + metrics.gap;\n"
+        "\t\t\t\tvar col = stride > 0 ? Math.floor(x / stride) : 0;\n"
+        "\t\t\t\tvar row = metrics.rowH > 0 ? Math.floor(y / metrics.rowH) : 0;\n"
+        "\t\t\t\tif (col < 0) col = 0;\n"
+        "\t\t\t\tif (col >= metrics.cols) col = metrics.cols - 1;\n"
+        "\t\t\t\tif (row < 0) row = 0;\n"
+        "\t\t\t\tvar index = row * metrics.cols + col;\n"
+        "\t\t\t\tif (index >= page.cards.length) index = page.cards.length - 1;\n"
+        "\t\t\t\tif (index < 0) index = 0;\n"
+        "\t\t\t\treturn index;\n"
+        "\t\t\t}\n"
+        "\t\t\tfunction markArtistDrop(grid, index) {\n"
+        "\t\t\t\tvar cards = grid.querySelectorAll(\".smp-album-card\");\n"
+        "\t\t\t\tvar i;\n"
+        "\t\t\t\tfor (i = 0; i < cards.length; i++) {\n"
+        "\t\t\t\t\tvar on = Number(cards[i].getAttribute(\"data-browse-index\")) === index;\n"
+        "\t\t\t\t\tif (on) cards[i].classList.add(\"smp-album-drop\");\n"
+        "\t\t\t\t\telse cards[i].classList.remove(\"smp-album-drop\");\n"
+        "\t\t\t\t}\n"
+        "\t\t\t}\n"
         "\t\t\tfunction bindArtistAlbumDrag(page, pageKey) {\n"
         "\t\t\t\tif (!page || !page.grid || page.doomnetDragBound) {\n"
         "\t\t\t\t\treturn;\n"
@@ -3527,6 +3556,8 @@ std::string patched_player_ui_text() {
         "\t\t\t\tpage.doomnetDragBound = true;\n"
         "\t\t\t\tvar grid = page.grid;\n"
         "\t\t\t\tvar fromIndex = -1;\n"
+        "\t\t\t\tvar hoverIndex = -1;\n"
+        "\t\t\t\tvar dropped = false;\n"
         "\t\t\t\tgrid.addEventListener(\"dragstart\", function (event) {\n"
         "\t\t\t\t\tif (artistOrderRecord(artist).mode !== \"custom\") {\n"
         "\t\t\t\t\t\tevent.preventDefault();\n"
@@ -3535,31 +3566,34 @@ std::string patched_player_ui_text() {
         "\t\t\t\t\tvar card = event.target && event.target.closest ? event.target.closest(\".smp-album-card\") : null;\n"
         "\t\t\t\t\tif (!card) return;\n"
         "\t\t\t\t\tfromIndex = Number(card.getAttribute(\"data-browse-index\"));\n"
+        "\t\t\t\t\thoverIndex = fromIndex;\n"
+        "\t\t\t\t\tdropped = false;\n"
         "\t\t\t\t\tcard.classList.add(\"dragging\");\n"
         "\t\t\t\t\tif (event.dataTransfer) {\n"
-        "\t\t\t\t\t\tevent.dataTransfer.effectAllowed = \"move\";\n"
-        "\t\t\t\t\t\tevent.dataTransfer.setData(\"text/plain\", String(fromIndex));\n"
+        "\t\t\t\t\t\ttry {\n"
+        "\t\t\t\t\t\t\tevent.dataTransfer.effectAllowed = \"move\";\n"
+        "\t\t\t\t\t\t\tevent.dataTransfer.setData(\"text/plain\", String(fromIndex));\n"
+        "\t\t\t\t\t\t} catch (err) {}\n"
         "\t\t\t\t\t}\n"
         "\t\t\t\t});\n"
         "\t\t\t\tgrid.addEventListener(\"dragover\", function (event) {\n"
         "\t\t\t\t\tif (artistOrderRecord(artist).mode !== \"custom\") return;\n"
-        "\t\t\t\t\tvar card = event.target && event.target.closest ? event.target.closest(\".smp-album-card\") : null;\n"
-        "\t\t\t\t\tif (!card) return;\n"
         "\t\t\t\t\tevent.preventDefault();\n"
-        "\t\t\t\t\tcard.classList.add(\"smp-album-drop\");\n"
-        "\t\t\t\t});\n"
-        "\t\t\t\tgrid.addEventListener(\"dragleave\", function (event) {\n"
-        "\t\t\t\t\tvar card = event.target && event.target.closest ? event.target.closest(\".smp-album-card\") : null;\n"
-        "\t\t\t\t\tif (card) card.classList.remove(\"smp-album-drop\");\n"
+        "\t\t\t\t\thoverIndex = artistAlbumIndexAt(page, grid, event.clientX, event.clientY);\n"
+        "\t\t\t\t\tmarkArtistDrop(grid, hoverIndex);\n"
         "\t\t\t\t});\n"
         "\t\t\t\tgrid.addEventListener(\"drop\", function (event) {\n"
-        "\t\t\t\t\tvar card = event.target && event.target.closest ? event.target.closest(\".smp-album-card\") : null;\n"
-        "\t\t\t\t\tif (!card) return;\n"
+        "\t\t\t\t\tif (artistOrderRecord(artist).mode !== \"custom\") return;\n"
         "\t\t\t\t\tevent.preventDefault();\n"
-        "\t\t\t\t\tcard.classList.remove(\"smp-album-drop\");\n"
-        "\t\t\t\t\tmoveArtistAlbum(page, pageKey, fromIndex, Number(card.getAttribute(\"data-browse-index\")));\n"
+        "\t\t\t\t\tdropped = true;\n"
+        "\t\t\t\t\thoverIndex = artistAlbumIndexAt(page, grid, event.clientX, event.clientY);\n"
+        "\t\t\t\t\tmoveArtistAlbum(page, pageKey, fromIndex, hoverIndex);\n"
         "\t\t\t\t});\n"
         "\t\t\t\tgrid.addEventListener(\"dragend\", function () {\n"
+        "\t\t\t\t\tif (!dropped && artistOrderRecord(artist).mode === \"custom\") {\n"
+        "\t\t\t\t\t\tmoveArtistAlbum(page, pageKey, fromIndex, hoverIndex);\n"
+        "\t\t\t\t\t}\n"
+        "\t\t\t\t\tdropped = false;\n"
         "\t\t\t\t\tvar marked = grid.querySelectorAll(\".dragging, .smp-album-drop\");\n"
         "\t\t\t\t\tvar i;\n"
         "\t\t\t\t\tfor (i = 0; i < marked.length; i++) {\n"
