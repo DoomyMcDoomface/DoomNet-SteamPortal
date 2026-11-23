@@ -886,10 +886,10 @@ std::string patched_player_bootstrap_text() {
         return {};
     }
     const std::string old_rev = "var ASSET_REV = \"20261027-version-1.15.0\"";
-    const std::string new_rev = "var ASSET_REV = \"20261120-version-1.20.1-update-message\"";
+    const std::string new_rev = "var ASSET_REV = \"20261123-version-1.21.0-artist-queue\"";
     const size_t at = text.find(old_rev);
     if (at == std::string::npos) {
-        if (text.find("20261120-version-1.20.1-update-message") == std::string::npos) {
+        if (text.find("20261123-version-1.21.0-artist-queue") == std::string::npos) {
             log_event(L"warn", L"inject", L"The player loader still uses version 1.15.0, so Steam can keep showing the old page.");
         }
     } else {
@@ -913,7 +913,7 @@ std::string patched_player_ui_text() {
     }
     ui.swap(normalized);
     const std::string old_plugin_version = "var PLUGIN_VERSION = \"1.15.0\"";
-    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.20.1\"";
+    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.21.0\"";
     for (size_t at = 0; (at = ui.find(old_plugin_version, at)) != std::string::npos; at += new_plugin_version.size()) {
         ui.replace(at, old_plugin_version.size(), new_plugin_version);
     }
@@ -3386,6 +3386,58 @@ std::string patched_player_ui_text() {
     } else {
         log_event(L"warn", L"inject", L"The player UI did not list the full Up Next queue, so those songs cannot be reordered while shuffle is off.");
     }
+    const std::string old_artist_albums =
+        "\t\trenderArtistAlbums: function (view, tracks) {\n"
+        "\t\t\tvar artist = UI.libraryDrill.artist;\n"
+        "\t\t\tUI.renderDrillBackBar(view, artist, UI.goBack);\n";
+    const std::string new_artist_albums =
+        "\t\trenderArtistAlbums: function (view, tracks) {\n"
+        "\t\t\tvar artist = UI.libraryDrill.artist;\n"
+        "\t\t\tvar artistQueueActions = el(\"div\", \"smp-artist-queue-actions\");\n"
+        "\t\t\tvar playArtistBtn = el(\"button\", \"smp-btn\", { type: \"button\", text: \"Play All\", title: \"Add every album by this artist to the queue\" });\n"
+        "\t\t\tvar shuffleArtistBtn = el(\"button\", \"smp-btn\", { type: \"button\", text: \"Shuffle Artist\", title: \"Add every album by this artist to the queue and turn shuffle on\" });\n"
+        "\t\t\tfunction tracksForArtistAlbums() {\n"
+        "\t\t\t\tvar pageKey = \"artistAlbums:\" + artist;\n"
+        "\t\t\t\tvar page = UI.browseCache.pages && UI.browseCache.pages[pageKey];\n"
+        "\t\t\t\tvar cards = page && page.allCards;\n"
+        "\t\t\t\tvar collected = [];\n"
+        "\t\t\t\t(cards || []).forEach(function (card) {\n"
+        "\t\t\t\t\tUI.sortAlbumTracks(card && card.tracks).forEach(function (track) {\n"
+        "\t\t\t\t\t\tif (track && track.id != null && track.id !== \"\") {\n"
+        "\t\t\t\t\t\t\tcollected.push(track);\n"
+        "\t\t\t\t\t\t}\n"
+        "\t\t\t\t\t});\n"
+        "\t\t\t\t});\n"
+        "\t\t\t\treturn collected;\n"
+        "\t\t\t}\n"
+        "\t\t\tplayArtistBtn.addEventListener(\"click\", function () {\n"
+        "\t\t\t\tvar artistTracks = tracksForArtistAlbums();\n"
+        "\t\t\t\tif (!artistTracks.length) {\n"
+        "\t\t\t\t\tUI.showToast(\"Nothing to play for this artist.\");\n"
+        "\t\t\t\t\treturn;\n"
+        "\t\t\t\t}\n"
+        "\t\t\t\tUI.enqueueTracks(artistTracks);\n"
+        "\t\t\t});\n"
+        "\t\t\tshuffleArtistBtn.addEventListener(\"click\", function () {\n"
+        "\t\t\t\tvar artistTracks = tracksForArtistAlbums();\n"
+        "\t\t\t\tif (!artistTracks.length) {\n"
+        "\t\t\t\t\tUI.showToast(\"Nothing to play for this artist.\");\n"
+        "\t\t\t\t\treturn;\n"
+        "\t\t\t\t}\n"
+        "\t\t\t\tUI.enqueueTracks(artistTracks);\n"
+        "\t\t\t\tif (!UI.currentShuffle()) {\n"
+        "\t\t\t\t\tEngine.applyCommand({ action: \"shuffle\", value: true });\n"
+        "\t\t\t\t}\n"
+        "\t\t\t});\n"
+        "\t\t\tartistQueueActions.appendChild(playArtistBtn);\n"
+        "\t\t\tartistQueueActions.appendChild(shuffleArtistBtn);\n"
+        "\t\t\tUI.renderDrillBackBar(view, artist, UI.goBack, artistQueueActions);\n";
+    const size_t artist_albums_at = ui.find(old_artist_albums);
+    if (artist_albums_at != std::string::npos) {
+        ui.replace(artist_albums_at, old_artist_albums.size(), new_artist_albums);
+    } else if (ui.find("text: \"Shuffle Artist\"") == std::string::npos) {
+        log_event(L"warn", L"inject", L"The player UI did not draw an artist's albums, so Play All and Shuffle Artist were not added.");
+    }
     const std::string old_paint_playing =
         "\t\tpaintPlaybackUi: function () {\n"
         "\t\t\tUI.safely(\"renderNowPlaying\", UI.renderNowPlaying);\n"
@@ -5467,6 +5519,8 @@ std::string patched_player_css_text() {
         return {};
     }
     css +=
+        "\n.smp-drill-bar .smp-artist-queue-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:8px;margin-left:auto;flex:0 1 auto;}"
+        "\n.smp-drill-bar .smp-artist-queue-actions .smp-btn{margin:0;flex:0 0 auto;}"
         "\n.smp-feature-block.is-locked{opacity:0.45;}"
         "\n.smp-feature-block.is-locked .smp-toggle-row{pointer-events:none;cursor:default;}"
         "\n.smp-feature-block.is-locked .smp-toggle-checkbox{cursor:default;}"
