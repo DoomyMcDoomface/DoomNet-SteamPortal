@@ -886,10 +886,10 @@ std::string patched_player_bootstrap_text() {
         return {};
     }
     const std::string old_rev = "var ASSET_REV = \"20261027-version-1.15.0\"";
-    const std::string new_rev = "var ASSET_REV = \"20261123-version-1.23.1-artist-menu\"";
+    const std::string new_rev = "var ASSET_REV = \"20261123-version-1.24.0-artist-queue\"";
     const size_t at = text.find(old_rev);
     if (at == std::string::npos) {
-        if (text.find("20261123-version-1.23.1-artist-menu") == std::string::npos) {
+        if (text.find("20261123-version-1.24.0-artist-queue") == std::string::npos) {
             log_event(L"warn", L"inject", L"The player loader still uses version 1.15.0, so Steam can keep showing the old page.");
         }
     } else {
@@ -913,7 +913,7 @@ std::string patched_player_ui_text() {
     }
     ui.swap(normalized);
     const std::string old_plugin_version = "var PLUGIN_VERSION = \"1.15.0\"";
-    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.23.1\"";
+    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.24.0\"";
     for (size_t at = 0; (at = ui.find(old_plugin_version, at)) != std::string::npos; at += new_plugin_version.size()) {
         ui.replace(at, old_plugin_version.size(), new_plugin_version);
     }
@@ -3386,6 +3386,84 @@ std::string patched_player_ui_text() {
     } else {
         log_event(L"warn", L"inject", L"The player UI did not list the full Up Next queue, so those songs cannot be reordered while shuffle is off.");
     }
+    const std::string old_optimistic_enqueue =
+        "\t\t\t\tcase \"enqueue\":\n"
+        "\t\t\t\t\tstate.queue = asArray(state.queue).concat(asArray(command.trackIds));\n";
+    const std::string new_optimistic_enqueue =
+        "\t\t\t\tcase \"sprinkle\": {\n"
+        "\t\t\t\t\tvar sprinkleIds = asArray(command.trackIds).slice();\n"
+        "\t\t\t\t\tvar sprinkleQueue = queue.slice();\n"
+        "\t\t\t\t\tvar sprinkleAt = index;\n"
+        "\t\t\t\t\tvar sprinkleN;\n"
+        "\t\t\t\t\tfor (sprinkleN = sprinkleIds.length - 1; sprinkleN > 0; sprinkleN--) {\n"
+        "\t\t\t\t\t\tvar sprinkleSwap = Math.floor(Math.random() * (sprinkleN + 1));\n"
+        "\t\t\t\t\t\tvar sprinkleTmp = sprinkleIds[sprinkleN];\n"
+        "\t\t\t\t\t\tsprinkleIds[sprinkleN] = sprinkleIds[sprinkleSwap];\n"
+        "\t\t\t\t\t\tsprinkleIds[sprinkleSwap] = sprinkleTmp;\n"
+        "\t\t\t\t\t}\n"
+        "\t\t\t\t\tif (!sprinkleQueue.length) {\n"
+        "\t\t\t\t\t\tstate.queue = sprinkleIds;\n"
+        "\t\t\t\t\t\tstate.queueIndex = 0;\n"
+        "\t\t\t\t\t\tstate.currentTrackId = sprinkleIds[0] || null;\n"
+        "\t\t\t\t\t\tstate.isPlaying = !!sprinkleIds.length;\n"
+        "\t\t\t\t\t\tstate.positionSeconds = 0;\n"
+        "\t\t\t\t\t\tstate.durationSeconds = 0;\n"
+        "\t\t\t\t\t\tApp.playerStateReceivedAt = Date.now();\n"
+        "\t\t\t\t\t\tbreak;\n"
+        "\t\t\t\t\t}\n"
+        "\t\t\t\t\tsprinkleIds.forEach(function (id) {\n"
+        "\t\t\t\t\t\tvar spot = Math.floor(Math.random() * (sprinkleQueue.length + 1));\n"
+        "\t\t\t\t\t\tsprinkleQueue.splice(spot, 0, id);\n"
+        "\t\t\t\t\t\tif (spot <= sprinkleAt) {\n"
+        "\t\t\t\t\t\t\tsprinkleAt++;\n"
+        "\t\t\t\t\t\t}\n"
+        "\t\t\t\t\t});\n"
+        "\t\t\t\t\tstate.queue = sprinkleQueue;\n"
+        "\t\t\t\t\tstate.queueIndex = sprinkleAt;\n"
+        "\t\t\t\t\tstate.currentTrackId = sprinkleQueue[sprinkleAt] || state.currentTrackId;\n"
+        "\t\t\t\t\tbreak;\n"
+        "\t\t\t\t}\n"
+        "\t\t\t\tcase \"enqueue\":\n"
+        "\t\t\t\t\tstate.queue = asArray(state.queue).concat(asArray(command.trackIds));\n";
+    const size_t optimistic_enqueue_at = ui.find(old_optimistic_enqueue);
+    if (optimistic_enqueue_at != std::string::npos) {
+        ui.replace(optimistic_enqueue_at, old_optimistic_enqueue.size(), new_optimistic_enqueue);
+    } else if (ui.find("case \"sprinkle\"") == std::string::npos) {
+        log_event(L"warn", L"inject", L"The player UI did not update the queue preview, so mixed-in songs would stay off the list until the next refresh.");
+    }
+    const std::string old_engine_enqueue =
+        "\t\t\t\tcase \"enqueue\":\n"
+        "\t\t\t\t\tengine.indexTrackMeta(asArray(command.trackIds).map(trackById));\n"
+        "\t\t\t\t\tengine.enqueue(asArray(command.trackIds));\n"
+        "\t\t\t\t\tbreak;\n";
+    const std::string new_engine_enqueue =
+        "\t\t\t\tcase \"enqueue\":\n"
+        "\t\t\t\t\tengine.indexTrackMeta(asArray(command.trackIds).map(trackById));\n"
+        "\t\t\t\t\tengine.enqueue(asArray(command.trackIds));\n"
+        "\t\t\t\t\tbreak;\n"
+        "\t\t\t\tcase \"sprinkle\":\n"
+        "\t\t\t\t\tengine.indexTrackMeta(asArray(command.trackIds).map(trackById));\n"
+        "\t\t\t\t\tengine.sprinkle(asArray(command.trackIds));\n"
+        "\t\t\t\t\tbreak;\n";
+    const size_t engine_enqueue_at = ui.find(old_engine_enqueue);
+    if (engine_enqueue_at != std::string::npos) {
+        ui.replace(engine_enqueue_at, old_engine_enqueue.size(), new_engine_enqueue);
+    } else if (ui.find("engine.sprinkle(") == std::string::npos) {
+        log_event(L"warn", L"inject", L"The player UI did not hand mixed-in songs to the audio engine, so Shuffle Artist to Queue would not change the queue.");
+    }
+    const std::string old_queue_push =
+        "\t\t\t\tcommand.action === \"enqueue\" ||\n"
+        "\t\t\t\tcommand.action === \"playNext\" ||\n";
+    const std::string new_queue_push =
+        "\t\t\t\tcommand.action === \"enqueue\" ||\n"
+        "\t\t\t\tcommand.action === \"sprinkle\" ||\n"
+        "\t\t\t\tcommand.action === \"playNext\" ||\n";
+    const size_t queue_push_at = ui.find(old_queue_push);
+    if (queue_push_at != std::string::npos) {
+        ui.replace(queue_push_at, old_queue_push.size(), new_queue_push);
+    } else if (ui.find("command.action === \"sprinkle\"") == std::string::npos) {
+        log_event(L"warn", L"inject", L"The player UI did not save a mixed-in queue, so those songs would disappear after a restart.");
+    }
     const std::string old_artist_albums =
         "\t\trenderArtistAlbums: function (view, tracks) {\n"
         "\t\t\tvar artist = UI.libraryDrill.artist;\n"
@@ -3396,6 +3474,9 @@ std::string patched_player_ui_text() {
         "\t\t\tvar artistQueueActions = el(\"div\", \"smp-artist-queue-actions\");\n"
         "\t\t\tvar playArtistBtn = el(\"button\", \"smp-btn\", { type: \"button\", text: \"Play All\", title: \"Replace the queue with this artist's albums, from the first album to the last\" });\n"
         "\t\t\tvar shuffleArtistBtn = el(\"button\", \"smp-btn\", { type: \"button\", text: \"Shuffle Artist\", title: \"Replace the queue with this artist's songs, starting on a random song\" });\n"
+        "\t\t\tvar addArtistQueueBtn = el(\"button\", \"smp-btn\", { type: \"button\", text: \"Add Artist to Queue\", title: \"Add this artist's albums to the end of the queue\" });\n"
+        "\t\t\tvar shuffleArtistQueueBtn = el(\"button\", \"smp-btn\", { type: \"button\", text: \"Shuffle Artist to Queue\", title: \"Place this artist's songs in random spots throughout the queue, including between songs already there\" });\n"
+        "\t\t\tvar addDiscographyBtn = el(\"button\", \"smp-btn\", { type: \"button\", text: \"Add Discography To Playlist\", title: \"Add this artist's albums to a playlist\" });\n"
         "\t\t\tfunction tracksForArtistAlbums() {\n"
         "\t\t\t\tvar pageKey = \"artistAlbums:\" + artist;\n"
         "\t\t\t\tvar page = UI.browseCache.pages && UI.browseCache.pages[pageKey];\n"
@@ -3636,8 +3717,47 @@ std::string patched_player_ui_text() {
         "\t\t\t\tUI.playTracks(artistTracks, 0);\n"
         "\t\t\t\tEngine.applyCommand({ action: \"shuffle\", value: true });\n"
         "\t\t\t});\n"
+        "\t\t\taddArtistQueueBtn.addEventListener(\"click\", function () {\n"
+        "\t\t\t\tvar queuedArtistTracks = tracksForArtistAlbums();\n"
+        "\t\t\t\tif (!queuedArtistTracks.length) {\n"
+        "\t\t\t\t\tUI.showToast(\"Nothing to play for this artist.\");\n"
+        "\t\t\t\t\treturn;\n"
+        "\t\t\t\t}\n"
+        "\t\t\t\tUI.enqueueTracks(queuedArtistTracks);\n"
+        "\t\t\t\tUI.showToast(\"Added this artist to the queue.\");\n"
+        "\t\t\t});\n"
+        "\t\t\tshuffleArtistQueueBtn.addEventListener(\"click\", function () {\n"
+        "\t\t\t\tvar artistTracks = tracksForArtistAlbums();\n"
+        "\t\t\t\tif (!artistTracks.length) {\n"
+        "\t\t\t\t\tUI.showToast(\"Nothing to play for this artist.\");\n"
+        "\t\t\t\t\treturn;\n"
+        "\t\t\t\t}\n"
+        "\t\t\t\tvar ids = [];\n"
+        "\t\t\t\tartistTracks.forEach(function (track) {\n"
+        "\t\t\t\t\tids.push(track.id);\n"
+        "\t\t\t\t});\n"
+        "\t\t\t\tEngine.applyCommand({ action: \"sprinkle\", trackIds: ids });\n"
+        "\t\t\t\tUI.showToast(\"Mixed this artist into the queue.\");\n"
+        "\t\t\t});\n"
+        "\t\t\taddDiscographyBtn.addEventListener(\"click\", function (event) {\n"
+        "\t\t\t\tevent.preventDefault();\n"
+        "\t\t\t\tevent.stopPropagation();\n"
+        "\t\t\t\tvar artistTracks = tracksForArtistAlbums();\n"
+        "\t\t\t\tif (!artistTracks.length) {\n"
+        "\t\t\t\t\tUI.showToast(\"Nothing to play for this artist.\");\n"
+        "\t\t\t\t\treturn;\n"
+        "\t\t\t\t}\n"
+        "\t\t\t\tvar ids = [];\n"
+        "\t\t\t\tartistTracks.forEach(function (track) {\n"
+        "\t\t\t\t\tids.push(track.id);\n"
+        "\t\t\t\t});\n"
+        "\t\t\t\tUI.doomnetOpenPlaylistMenu(addDiscographyBtn, ids);\n"
+        "\t\t\t});\n"
         "\t\t\tartistQueueActions.appendChild(playArtistBtn);\n"
         "\t\t\tartistQueueActions.appendChild(shuffleArtistBtn);\n"
+        "\t\t\tartistQueueActions.appendChild(addArtistQueueBtn);\n"
+        "\t\t\tartistQueueActions.appendChild(shuffleArtistQueueBtn);\n"
+        "\t\t\tartistQueueActions.appendChild(addDiscographyBtn);\n"
         "\t\t\tvar orderWrap = el(\"div\", \"smp-artist-order\");\n"
         "\t\t\tvar orderButton = el(\"button\", \"smp-artist-order-btn\", { type: \"button\" });\n"
         "\t\t\torderButton.setAttribute(\"aria-label\", \"Album order\");\n"
@@ -5723,6 +5843,57 @@ std::string patched_player_audio_engine_text() {
         engine.replace(fields_at, old_fields.size(), new_fields);
     } else {
         log_event(L"warn", L"stream", L"The player engine constructor changed, so the detached StreamTunes fields were not added.");
+    }
+
+    const std::string old_engine_enqueue_fn = "\tAudioEngine.prototype.enqueue = function (trackIds) {\n";
+    const std::string new_engine_enqueue_fn =
+        "\tAudioEngine.prototype.sprinkle = function (trackIds) {\n"
+        "\t\tvar ids = (trackIds || []).slice();\n"
+        "\t\tif (!ids.length) {\n"
+        "\t\t\treturn;\n"
+        "\t\t}\n"
+        "\t\tvar n;\n"
+        "\t\tfor (n = ids.length - 1; n > 0; n--) {\n"
+        "\t\t\tvar swap = Math.floor(Math.random() * (n + 1));\n"
+        "\t\t\tvar tmp = ids[n];\n"
+        "\t\t\tids[n] = ids[swap];\n"
+        "\t\t\tids[swap] = tmp;\n"
+        "\t\t}\n"
+        "\t\tif (!this.queue.length) {\n"
+        "\t\t\tthis.queue = ids.slice();\n"
+        "\t\t\tthis.unshuffledQueue = this.shuffle ? this.queue.slice() : null;\n"
+        "\t\t\tthis.emit({ type: \"queue-changed\" });\n"
+        "\t\t\tthis.playTrackAtIndex(0);\n"
+        "\t\t\treturn;\n"
+        "\t\t}\n"
+        "\t\tvar queue = this.queue.slice();\n"
+        "\t\tvar index = this.queueIndex >= 0 ? this.queueIndex : 0;\n"
+        "\t\tids.forEach(function (id) {\n"
+        "\t\t\tvar spot = Math.floor(Math.random() * (queue.length + 1));\n"
+        "\t\t\tqueue.splice(spot, 0, id);\n"
+        "\t\t\tif (spot <= index) {\n"
+        "\t\t\t\tindex++;\n"
+        "\t\t\t}\n"
+        "\t\t});\n"
+        "\t\tthis.queue = queue;\n"
+        "\t\tthis.queueIndex = index;\n"
+        "\t\tif (this.unshuffledQueue) {\n"
+        "\t\t\tvar saved = this.unshuffledQueue.slice();\n"
+        "\t\t\tids.forEach(function (id) {\n"
+        "\t\t\t\tvar spot = Math.floor(Math.random() * (saved.length + 1));\n"
+        "\t\t\t\tsaved.splice(spot, 0, id);\n"
+        "\t\t\t});\n"
+        "\t\t\tthis.unshuffledQueue = saved;\n"
+        "\t\t}\n"
+        "\t\tthis.emit({ type: \"queue-changed\" });\n"
+        "\t};\n"
+        "\n"
+        "\tAudioEngine.prototype.enqueue = function (trackIds) {\n";
+    const size_t engine_enqueue_fn_at = engine.find(old_engine_enqueue_fn);
+    if (engine_enqueue_fn_at != std::string::npos) {
+        engine.replace(engine_enqueue_fn_at, old_engine_enqueue_fn.size(), new_engine_enqueue_fn);
+    } else if (engine.find("AudioEngine.prototype.sprinkle") == std::string::npos) {
+        log_event(L"warn", L"inject", L"The audio engine did not gain a way to mix songs into the current queue, so Shuffle Artist to Queue would only add them at the end.");
     }
 
     const std::string dispose_anchor = "\tAudioEngine.prototype.dispose = function () {\n";
