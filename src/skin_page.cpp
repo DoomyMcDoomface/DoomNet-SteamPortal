@@ -886,10 +886,10 @@ std::string patched_player_bootstrap_text() {
         return {};
     }
     const std::string old_rev = "var ASSET_REV = \"20261027-version-1.15.0\"";
-    const std::string new_rev = "var ASSET_REV = \"20261123-version-1.22.2-artist-year\"";
+    const std::string new_rev = "var ASSET_REV = \"20261123-version-1.23.0-artist-direction\"";
     const size_t at = text.find(old_rev);
     if (at == std::string::npos) {
-        if (text.find("20261123-version-1.22.2-artist-year") == std::string::npos) {
+        if (text.find("20261123-version-1.23.0-artist-direction") == std::string::npos) {
             log_event(L"warn", L"inject", L"The player loader still uses version 1.15.0, so Steam can keep showing the old page.");
         }
     } else {
@@ -913,7 +913,7 @@ std::string patched_player_ui_text() {
     }
     ui.swap(normalized);
     const std::string old_plugin_version = "var PLUGIN_VERSION = \"1.15.0\"";
-    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.22.2\"";
+    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.23.0\"";
     for (size_t at = 0; (at = ui.find(old_plugin_version, at)) != std::string::npos; at += new_plugin_version.size()) {
         ui.replace(at, old_plugin_version.size(), new_plugin_version);
     }
@@ -3462,15 +3462,17 @@ std::string patched_player_ui_text() {
         "\t\t\t}\n"
         "\t\t\tfunction orderArtistAlbums(cards) {\n"
         "\t\t\t\tvar list = (cards || []).slice();\n"
-        "\t\t\t\tvar mode = artistOrderRecord(artist).mode || \"year\";\n"
+        "\t\t\t\tvar record = artistOrderRecord(artist);\n"
+        "\t\t\t\tvar mode = record.mode || \"year\";\n"
+        "\t\t\t\tvar dir = record.dir === \"desc\" ? -1 : 1;\n"
         "\t\t\t\tif (mode === \"year\") {\n"
         "\t\t\t\t\tlist.sort(function (a, b) {\n"
         "\t\t\t\t\t\tvar yearA = albumOrderYear(a);\n"
         "\t\t\t\t\t\tvar yearB = albumOrderYear(b);\n"
         "\t\t\t\t\t\tif (yearA === 0 && yearB !== 0) return 1;\n"
         "\t\t\t\t\t\tif (yearB === 0 && yearA !== 0) return -1;\n"
-        "\t\t\t\t\t\tif (yearA !== yearB) return yearA - yearB;\n"
-        "\t\t\t\t\t\treturn compareNames(a.album || a.title, b.album || b.title);\n"
+        "\t\t\t\t\t\tif (yearA !== yearB) return (yearA - yearB) * dir;\n"
+        "\t\t\t\t\t\treturn compareNames(a.album || a.title, b.album || b.title) * dir;\n"
         "\t\t\t\t\t});\n"
         "\t\t\t\t\treturn list;\n"
         "\t\t\t\t}\n"
@@ -3488,7 +3490,7 @@ std::string patched_player_ui_text() {
         "\t\t\t\t\treturn list;\n"
         "\t\t\t\t}\n"
         "\t\t\t\tlist.sort(function (a, b) {\n"
-        "\t\t\t\t\treturn compareNames(a.album || a.title, b.album || b.title);\n"
+        "\t\t\t\t\treturn compareNames(a.album || a.title, b.album || b.title) * dir;\n"
         "\t\t\t\t});\n"
         "\t\t\t\treturn list;\n"
         "\t\t\t}\n"
@@ -3699,7 +3701,31 @@ std::string patched_player_ui_text() {
         "\t\t\t}\n"
         "\t\t\torderWrap.appendChild(orderButton);\n"
         "\t\t\torderWrap.appendChild(orderMenu);\n"
+        "\t\t\tvar orderDirBtn = el(\"button\", \"smp-artist-order-dir\", { type: \"button\" });\n"
+        "\t\t\tfunction paintOrderDir() {\n"
+        "\t\t\t\tvar current = artistOrderRecord(artist);\n"
+        "\t\t\t\tvar descending = current.dir === \"desc\";\n"
+        "\t\t\t\tvar custom = (current.mode || \"year\") === \"custom\";\n"
+        "\t\t\t\torderDirBtn.hidden = custom;\n"
+        "\t\t\t\torderDirBtn.textContent = descending ? \"\\u25BC\" : \"\\u25B2\";\n"
+        "\t\t\t\tif ((current.mode || \"year\") === \"year\") {\n"
+        "\t\t\t\t\torderDirBtn.title = descending ? \"Newest first\" : \"Oldest first\";\n"
+        "\t\t\t\t} else {\n"
+        "\t\t\t\t\torderDirBtn.title = descending ? \"Z to A\" : \"A to Z\";\n"
+        "\t\t\t\t}\n"
+        "\t\t\t}\n"
+        "\t\t\tpaintOrderDir();\n"
+        "\t\t\torderDirBtn.addEventListener(\"click\", function (event) {\n"
+        "\t\t\t\tevent.preventDefault();\n"
+        "\t\t\t\tevent.stopPropagation();\n"
+        "\t\t\t\tvar current = artistOrderRecord(artist);\n"
+        "\t\t\t\tif ((current.mode || \"year\") === \"custom\") return;\n"
+        "\t\t\t\tcurrent.dir = current.dir === \"desc\" ? \"asc\" : \"desc\";\n"
+        "\t\t\t\tsaveArtistOrder();\n"
+        "\t\t\t\tUI.renderLibrary();\n"
+        "\t\t\t});\n"
         "\t\t\tartistQueueActions.appendChild(orderWrap);\n"
+        "\t\t\tartistQueueActions.appendChild(orderDirBtn);\n"
         "\t\t\tUI.renderDrillBackBar(view, artist, UI.goBack, artistQueueActions);\n";
     const size_t artist_albums_at = ui.find(old_artist_albums);
     if (artist_albums_at != std::string::npos) {
@@ -5847,6 +5873,9 @@ std::string patched_player_css_text() {
         "\n.smp-artist-order-menu[hidden]{display:none;}"
         "\n.smp-artist-order-item{display:block;width:100%;margin:0;padding:6px 10px;border:0;border-radius:2px;background:transparent;color:var(--smp-text);font:inherit;font-size:12px;text-align:left;cursor:pointer;}"
         "\n.smp-artist-order-item:hover,.smp-artist-order-item.is-selected{background:var(--smp-accent);color:#fff;}"
+        "\n.smp-artist-order-dir{margin:0;width:28px;height:28px;min-height:28px;padding:0;border-radius:3px;border:1px solid var(--smp-border);background:var(--smp-bg-panel);color:var(--smp-accent);font:inherit;font-size:12px;line-height:1;cursor:pointer;flex:0 0 auto;}"
+        "\n.smp-artist-order-dir[hidden]{display:none;}"
+        "\n.smp-artist-order-dir:hover{border-color:var(--smp-accent);}"
         "\n.smp-album-card.smp-album-draggable{cursor:grab;}"
         "\n.smp-album-card.dragging{opacity:0.4;}"
         "\n.smp-album-card.smp-album-drop{outline:1px solid var(--smp-accent);outline-offset:-1px;}"
