@@ -886,10 +886,10 @@ std::string patched_player_bootstrap_text() {
         return {};
     }
     const std::string old_rev = "var ASSET_REV = \"20261027-version-1.15.0\"";
-    const std::string new_rev = "var ASSET_REV = \"20261123-version-1.22.1-artist-drag\"";
+    const std::string new_rev = "var ASSET_REV = \"20261123-version-1.22.2-artist-year\"";
     const size_t at = text.find(old_rev);
     if (at == std::string::npos) {
-        if (text.find("20261123-version-1.22.1-artist-drag") == std::string::npos) {
+        if (text.find("20261123-version-1.22.2-artist-year") == std::string::npos) {
             log_event(L"warn", L"inject", L"The player loader still uses version 1.15.0, so Steam can keep showing the old page.");
         }
     } else {
@@ -913,7 +913,7 @@ std::string patched_player_ui_text() {
     }
     ui.swap(normalized);
     const std::string old_plugin_version = "var PLUGIN_VERSION = \"1.15.0\"";
-    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.22.1\"";
+    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.22.2\"";
     for (size_t at = 0; (at = ui.find(old_plugin_version, at)) != std::string::npos; at += new_plugin_version.size()) {
         ui.replace(at, old_plugin_version.size(), new_plugin_version);
     }
@@ -3451,7 +3451,7 @@ std::string patched_player_ui_text() {
         "\t\t\t\tvar store = readArtistOrderStore();\n"
         "\t\t\t\tvar key = foldName(name || \"\");\n"
         "\t\t\t\tif (!store[key]) {\n"
-        "\t\t\t\t\tstore[key] = { mode: \"title\", custom: [] };\n"
+        "\t\t\t\t\tstore[key] = { mode: \"year\", custom: [] };\n"
         "\t\t\t\t}\n"
         "\t\t\t\treturn store[key];\n"
         "\t\t\t}\n"
@@ -3462,7 +3462,7 @@ std::string patched_player_ui_text() {
         "\t\t\t}\n"
         "\t\t\tfunction orderArtistAlbums(cards) {\n"
         "\t\t\t\tvar list = (cards || []).slice();\n"
-        "\t\t\t\tvar mode = artistOrderRecord(artist).mode || \"title\";\n"
+        "\t\t\t\tvar mode = artistOrderRecord(artist).mode || \"year\";\n"
         "\t\t\t\tif (mode === \"year\") {\n"
         "\t\t\t\t\tlist.sort(function (a, b) {\n"
         "\t\t\t\t\t\tvar yearA = albumOrderYear(a);\n"
@@ -3636,27 +3636,70 @@ std::string patched_player_ui_text() {
         "\t\t\t});\n"
         "\t\t\tartistQueueActions.appendChild(playArtistBtn);\n"
         "\t\t\tartistQueueActions.appendChild(shuffleArtistBtn);\n"
-        "\t\t\tvar orderSelect = el(\"select\", \"smp-artist-order\");\n"
-        "\t\t\torderSelect.setAttribute(\"aria-label\", \"Album order\");\n"
-        "\t\t\torderSelect.title = \"Title, year, or drag the albums into your own order\";\n"
-        "\t\t\t[[\"title\", \"Title\"], [\"year\", \"Year\"], [\"custom\", \"Custom\"]].forEach(function (choice) {\n"
-        "\t\t\t\tvar option = el(\"option\");\n"
-        "\t\t\t\toption.value = choice[0];\n"
-        "\t\t\t\toption.textContent = choice[1];\n"
-        "\t\t\t\torderSelect.appendChild(option);\n"
-        "\t\t\t});\n"
-        "\t\t\torderSelect.value = artistOrderRecord(artist).mode || \"title\";\n"
-        "\t\t\torderSelect.addEventListener(\"change\", function () {\n"
-        "\t\t\t\tvar record = artistOrderRecord(artist);\n"
-        "\t\t\t\tvar page = UI.browseCache.pages && UI.browseCache.pages[\"artistAlbums:\" + artist];\n"
-        "\t\t\t\tif (orderSelect.value === \"custom\" && (!record.custom || !record.custom.length) && page && page.allCards) {\n"
-        "\t\t\t\t\trecord.custom = page.allCards.map(albumOrderKey);\n"
+        "\t\t\tvar orderWrap = el(\"div\", \"smp-artist-order\");\n"
+        "\t\t\tvar orderButton = el(\"button\", \"smp-artist-order-btn\", { type: \"button\" });\n"
+        "\t\t\torderButton.setAttribute(\"aria-label\", \"Album order\");\n"
+        "\t\t\torderButton.title = \"Year, title, or drag the albums into your own order\";\n"
+        "\t\t\tvar orderMenu = el(\"div\", \"smp-artist-order-menu\");\n"
+        "\t\t\torderMenu.hidden = true;\n"
+        "\t\t\tvar orderChoices = [[\"year\", \"Year\"], [\"title\", \"Title\"], [\"custom\", \"Custom\"]];\n"
+        "\t\t\tfunction orderModeLabel(mode) {\n"
+        "\t\t\t\tvar label = \"Year\";\n"
+        "\t\t\t\torderChoices.forEach(function (choice) {\n"
+        "\t\t\t\t\tif (choice[0] === mode) label = choice[1];\n"
+        "\t\t\t\t});\n"
+        "\t\t\t\treturn label;\n"
+        "\t\t\t}\n"
+        "\t\t\tfunction markOrderItems() {\n"
+        "\t\t\t\tvar mode = artistOrderRecord(artist).mode || \"year\";\n"
+        "\t\t\t\tvar items = orderMenu.querySelectorAll(\".smp-artist-order-item\");\n"
+        "\t\t\t\tvar i;\n"
+        "\t\t\t\tfor (i = 0; i < items.length; i++) {\n"
+        "\t\t\t\t\tif (items[i].getAttribute(\"data-order\") === mode) items[i].classList.add(\"is-selected\");\n"
+        "\t\t\t\t\telse items[i].classList.remove(\"is-selected\");\n"
         "\t\t\t\t}\n"
-        "\t\t\t\trecord.mode = orderSelect.value === \"year\" || orderSelect.value === \"custom\" ? orderSelect.value : \"title\";\n"
-        "\t\t\t\tsaveArtistOrder();\n"
-        "\t\t\t\tUI.renderLibrary();\n"
+        "\t\t\t}\n"
+        "\t\t\torderButton.textContent = orderModeLabel(artistOrderRecord(artist).mode || \"year\");\n"
+        "\t\t\torderChoices.forEach(function (choice) {\n"
+        "\t\t\t\tvar item = el(\"button\", \"smp-artist-order-item\", { type: \"button\", text: choice[1] });\n"
+        "\t\t\t\titem.setAttribute(\"data-order\", choice[0]);\n"
+        "\t\t\t\titem.addEventListener(\"click\", function (event) {\n"
+        "\t\t\t\t\tevent.preventDefault();\n"
+        "\t\t\t\t\tevent.stopPropagation();\n"
+        "\t\t\t\t\tvar record = artistOrderRecord(artist);\n"
+        "\t\t\t\t\tvar page = UI.browseCache.pages && UI.browseCache.pages[\"artistAlbums:\" + artist];\n"
+        "\t\t\t\t\tif (choice[0] === \"custom\" && (!record.custom || !record.custom.length) && page && page.allCards) {\n"
+        "\t\t\t\t\t\trecord.custom = page.allCards.map(albumOrderKey);\n"
+        "\t\t\t\t\t}\n"
+        "\t\t\t\t\trecord.mode = choice[0] === \"title\" || choice[0] === \"custom\" ? choice[0] : \"year\";\n"
+        "\t\t\t\t\tsaveArtistOrder();\n"
+        "\t\t\t\t\torderMenu.hidden = true;\n"
+        "\t\t\t\t\tUI.renderLibrary();\n"
+        "\t\t\t\t});\n"
+        "\t\t\t\torderMenu.appendChild(item);\n"
         "\t\t\t});\n"
-        "\t\t\tartistQueueActions.appendChild(orderSelect);\n"
+        "\t\t\tmarkOrderItems();\n"
+        "\t\t\torderButton.addEventListener(\"click\", function (event) {\n"
+        "\t\t\t\tevent.preventDefault();\n"
+        "\t\t\t\tevent.stopPropagation();\n"
+        "\t\t\t\tvar opening = orderMenu.hidden;\n"
+        "\t\t\t\tvar menus = document.querySelectorAll(\".smp-artist-order-menu\");\n"
+        "\t\t\t\tvar i;\n"
+        "\t\t\t\tfor (i = 0; i < menus.length; i++) menus[i].hidden = true;\n"
+        "\t\t\t\torderMenu.hidden = !opening;\n"
+        "\t\t\t\tif (!orderMenu.hidden) markOrderItems();\n"
+        "\t\t\t});\n"
+        "\t\t\tif (!UI.doomnetArtistOrderCloser) {\n"
+        "\t\t\t\tUI.doomnetArtistOrderCloser = function () {\n"
+        "\t\t\t\t\tvar menus = document.querySelectorAll(\".smp-artist-order-menu\");\n"
+        "\t\t\t\t\tvar i;\n"
+        "\t\t\t\t\tfor (i = 0; i < menus.length; i++) menus[i].hidden = true;\n"
+        "\t\t\t\t};\n"
+        "\t\t\t\tdocument.addEventListener(\"click\", UI.doomnetArtistOrderCloser);\n"
+        "\t\t\t}\n"
+        "\t\t\torderWrap.appendChild(orderButton);\n"
+        "\t\t\torderWrap.appendChild(orderMenu);\n"
+        "\t\t\tartistQueueActions.appendChild(orderWrap);\n"
         "\t\t\tUI.renderDrillBackBar(view, artist, UI.goBack, artistQueueActions);\n";
     const size_t artist_albums_at = ui.find(old_artist_albums);
     if (artist_albums_at != std::string::npos) {
@@ -5797,7 +5840,13 @@ std::string patched_player_css_text() {
     css +=
         "\n.smp-drill-bar .smp-artist-queue-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:8px;margin-left:auto;flex:0 1 auto;}"
         "\n.smp-drill-bar .smp-artist-queue-actions .smp-btn{margin:0;flex:0 0 auto;}"
-        "\n.smp-drill-bar .smp-artist-order{margin:0;height:28px;min-height:28px;padding:0 8px;border-radius:3px;border:1px solid var(--smp-border);background:var(--smp-bg-panel);color:var(--smp-text);font:inherit;font-size:12px;flex:0 0 auto;}"
+        "\n.smp-drill-bar .smp-artist-order{position:relative;margin:0;flex:0 0 auto;}"
+        "\n.smp-artist-order-btn{margin:0;height:28px;min-height:28px;padding:0 22px 0 10px;border-radius:3px;border:1px solid var(--smp-border);background:var(--smp-bg-panel);color:var(--smp-text);font:inherit;font-size:12px;cursor:pointer;position:relative;}"
+        "\n.smp-artist-order-btn:after{content:\"\";position:absolute;right:8px;top:50%;margin-top:-2px;border-left:4px solid transparent;border-right:4px solid transparent;border-top:5px solid var(--smp-accent);}"
+        "\n.smp-artist-order-menu{position:absolute;top:calc(100% + 4px);right:0;z-index:30;min-width:100%;padding:4px;border-radius:3px;border:1px solid var(--smp-border);background:var(--smp-bg-panel);box-shadow:0 8px 24px rgba(0,0,0,0.35);}"
+        "\n.smp-artist-order-menu[hidden]{display:none;}"
+        "\n.smp-artist-order-item{display:block;width:100%;margin:0;padding:6px 10px;border:0;border-radius:2px;background:transparent;color:var(--smp-text);font:inherit;font-size:12px;text-align:left;cursor:pointer;}"
+        "\n.smp-artist-order-item:hover,.smp-artist-order-item.is-selected{background:var(--smp-accent);color:#fff;}"
         "\n.smp-album-card.smp-album-draggable{cursor:grab;}"
         "\n.smp-album-card.dragging{opacity:0.4;}"
         "\n.smp-album-card.smp-album-drop{outline:1px solid var(--smp-accent);outline-offset:-1px;}"

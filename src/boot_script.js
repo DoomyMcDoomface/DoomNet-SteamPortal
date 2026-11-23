@@ -72,7 +72,7 @@
     // a copy without the skin config ran first. Returning there skips the player
     // and the skin, so Steam reopens with neither. Install the binding once, then
     // always apply the config that is on this copy.
-    var BOOTSTRAP_URL = "https://steamloopback.host/steam-music-player/bootstrap.js?v=20261123-version-1.22.1-artist-drag";
+    var BOOTSTRAP_URL = "https://steamloopback.host/steam-music-player/bootstrap.js?v=20261123-version-1.22.2-artist-year";
     var doomnetBindingReady = window.Millennium && typeof window.Millennium.callServerMethod === "function" && typeof window.__doomnetCall === "function";
     if (!doomnetBindingReady) {
     var pending = {};
