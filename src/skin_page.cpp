@@ -886,10 +886,10 @@ std::string patched_player_bootstrap_text() {
         return {};
     }
     const std::string old_rev = "var ASSET_REV = \"20261027-version-1.15.0\"";
-    const std::string new_rev = "var ASSET_REV = \"20261123-version-1.23.0-artist-direction\"";
+    const std::string new_rev = "var ASSET_REV = \"20261123-version-1.23.1-artist-menu\"";
     const size_t at = text.find(old_rev);
     if (at == std::string::npos) {
-        if (text.find("20261123-version-1.23.0-artist-direction") == std::string::npos) {
+        if (text.find("20261123-version-1.23.1-artist-menu") == std::string::npos) {
             log_event(L"warn", L"inject", L"The player loader still uses version 1.15.0, so Steam can keep showing the old page.");
         }
     } else {
@@ -913,7 +913,7 @@ std::string patched_player_ui_text() {
     }
     ui.swap(normalized);
     const std::string old_plugin_version = "var PLUGIN_VERSION = \"1.15.0\"";
-    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.23.0\"";
+    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.23.1\"";
     for (size_t at = 0; (at = ui.find(old_plugin_version, at)) != std::string::npos; at += new_plugin_version.size()) {
         ui.replace(at, old_plugin_version.size(), new_plugin_version);
     }
@@ -5864,7 +5864,8 @@ std::string patched_player_css_text() {
         return {};
     }
     css +=
-        "\n.smp-drill-bar .smp-artist-queue-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:8px;margin-left:auto;flex:0 1 auto;}"
+        "\n.smp-view-library .smp-drill-bar{position:relative;z-index:8;}"
+        "\n.smp-drill-bar .smp-artist-queue-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:8px;margin-left:auto;flex:0 1 auto;overflow:visible;max-width:none;white-space:normal;}"
         "\n.smp-drill-bar .smp-artist-queue-actions .smp-btn{margin:0;flex:0 0 auto;}"
         "\n.smp-drill-bar .smp-artist-order{position:relative;margin:0;flex:0 0 auto;}"
         "\n.smp-artist-order-btn{margin:0;height:28px;min-height:28px;padding:0 22px 0 10px;border-radius:3px;border:1px solid var(--smp-border);background:var(--smp-bg-panel);color:var(--smp-text);font:inherit;font-size:12px;cursor:pointer;position:relative;}"
