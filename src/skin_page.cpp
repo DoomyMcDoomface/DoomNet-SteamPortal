@@ -886,10 +886,10 @@ std::string patched_player_bootstrap_text() {
         return {};
     }
     const std::string old_rev = "var ASSET_REV = \"20261027-version-1.15.0\"";
-    const std::string new_rev = "var ASSET_REV = \"20261123-version-1.25.4-eye-labels\"";
+    const std::string new_rev = "var ASSET_REV = \"20261123-version-1.25.5-eye-label-text\"";
     const size_t at = text.find(old_rev);
     if (at == std::string::npos) {
-        if (text.find("20261123-version-1.25.4-eye-labels") == std::string::npos) {
+        if (text.find("20261123-version-1.25.5-eye-label-text") == std::string::npos) {
             log_event(L"warn", L"inject", L"The player loader still uses version 1.15.0, so Steam can keep showing the old page.");
         }
     } else {
@@ -913,7 +913,7 @@ std::string patched_player_ui_text() {
     }
     ui.swap(normalized);
     const std::string old_plugin_version = "var PLUGIN_VERSION = \"1.15.0\"";
-    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.25.4\"";
+    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.25.5\"";
     for (size_t at = 0; (at = ui.find(old_plugin_version, at)) != std::string::npos; at += new_plugin_version.size()) {
         ui.replace(at, old_plugin_version.size(), new_plugin_version);
     }
@@ -6092,8 +6092,9 @@ std::string patched_player_css_text() {
         "\n.doomnet-artist-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}"
         "\n.doomnet-artist-eye{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;margin:0;padding:0;border:0;background:transparent;color:var(--smp-accent);cursor:pointer;flex:0 0 auto;}"
         "\n.doomnet-artist-eye svg{display:block;}"
-        "\n.doomnet-artist-eye::after,#doomnet-steamtunes-host .doomnet-flank-eye::after{content:attr(data-tip);position:absolute;left:0;top:calc(100% + 6px);z-index:30;display:none;padding:6px 8px;border-radius:3px;background:var(--smp-bg-panel,#1b1c1f);border:1px solid var(--smp-border,rgba(255,255,255,0.14));color:var(--smp-text,#fff);font:500 12px/1.3 \"Motiva Sans\",Arial,sans-serif;white-space:nowrap;pointer-events:none;box-shadow:0 8px 24px rgba(0,0,0,0.45);}"
-        "\n.doomnet-artist-eye:hover::after,#doomnet-steamtunes-host .doomnet-flank-eye:hover::after{display:block;}"
+        "\n.doomnet-artist-eye::after,#doomnet-steamtunes-host .doomnet-flank-eye::after{position:absolute;left:calc(100% + 8px);top:0;z-index:30;display:none;padding:6px 8px;border-radius:3px;background:var(--smp-bg-panel,#1b1c1f);border:1px solid var(--smp-border,rgba(255,255,255,0.14));color:var(--smp-text,#fff);font:500 12px/1.3 Arial,sans-serif;white-space:nowrap;pointer-events:none;box-shadow:0 8px 24px rgba(0,0,0,0.45);}"
+        "\n.doomnet-artist-eye:hover::after{content:\"Show/Hide Extra Options For This Artist\";display:block;}"
+        "\n#doomnet-steamtunes-host .doomnet-flank-eye:hover::after{content:\"Show/Hide Extra Options For Now Playing\";display:block;}"
         "\n.smp-artist-queue-actions.doomnet-artist-extras-off .doomnet-artist-extra{display:none;}"
         "\n.smp-drill-bar .smp-artist-order{position:relative;margin:0;flex:0 0 auto;}"
         "\n.smp-artist-order-btn{margin:0;height:28px;min-height:28px;padding:0 22px 0 10px;border-radius:3px;border:1px solid var(--smp-border);background:var(--smp-bg-panel);color:var(--smp-text);font:inherit;font-size:12px;cursor:pointer;position:relative;}"
