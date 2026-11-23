@@ -886,10 +886,10 @@ std::string patched_player_bootstrap_text() {
         return {};
     }
     const std::string old_rev = "var ASSET_REV = \"20261027-version-1.15.0\"";
-    const std::string new_rev = "var ASSET_REV = \"20261123-version-1.24.0-artist-queue\"";
+    const std::string new_rev = "var ASSET_REV = \"20261123-version-1.25.0-artist-eye\"";
     const size_t at = text.find(old_rev);
     if (at == std::string::npos) {
-        if (text.find("20261123-version-1.24.0-artist-queue") == std::string::npos) {
+        if (text.find("20261123-version-1.25.0-artist-eye") == std::string::npos) {
             log_event(L"warn", L"inject", L"The player loader still uses version 1.15.0, so Steam can keep showing the old page.");
         }
     } else {
@@ -913,7 +913,7 @@ std::string patched_player_ui_text() {
     }
     ui.swap(normalized);
     const std::string old_plugin_version = "var PLUGIN_VERSION = \"1.15.0\"";
-    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.24.0\"";
+    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.25.0\"";
     for (size_t at = 0; (at = ui.find(old_plugin_version, at)) != std::string::npos; at += new_plugin_version.size()) {
         ui.replace(at, old_plugin_version.size(), new_plugin_version);
     }
@@ -3753,6 +3753,9 @@ std::string patched_player_ui_text() {
         "\t\t\t\t});\n"
         "\t\t\t\tUI.doomnetOpenPlaylistMenu(addDiscographyBtn, ids);\n"
         "\t\t\t});\n"
+        "\t\t\taddArtistQueueBtn.classList.add(\"doomnet-artist-extra\");\n"
+        "\t\t\tshuffleArtistQueueBtn.classList.add(\"doomnet-artist-extra\");\n"
+        "\t\t\taddDiscographyBtn.classList.add(\"doomnet-artist-extra\");\n"
         "\t\t\tartistQueueActions.appendChild(playArtistBtn);\n"
         "\t\t\tartistQueueActions.appendChild(shuffleArtistBtn);\n"
         "\t\t\tartistQueueActions.appendChild(addArtistQueueBtn);\n"
@@ -3844,9 +3847,55 @@ std::string patched_player_ui_text() {
         "\t\t\t\tsaveArtistOrder();\n"
         "\t\t\t\tUI.renderLibrary();\n"
         "\t\t\t});\n"
+        "\t\t\torderWrap.classList.add(\"doomnet-artist-extra\");\n"
+        "\t\t\torderDirBtn.classList.add(\"doomnet-artist-extra\");\n"
         "\t\t\tartistQueueActions.appendChild(orderWrap);\n"
         "\t\t\tartistQueueActions.appendChild(orderDirBtn);\n"
-        "\t\t\tUI.renderDrillBackBar(view, artist, UI.goBack, artistQueueActions);\n";
+        "\t\t\tUI.renderDrillBackBar(view, artist, UI.goBack, artistQueueActions);\n"
+        "\t\t\tvar artistBar = artistQueueActions.parentNode;\n"
+        "\t\t\tvar artistTitle = artistBar && artistBar.querySelector(\".smp-drill-title\");\n"
+        "\t\t\tif (artistTitle) {\n"
+        "\t\t\t\tvar artistName = artistTitle.textContent;\n"
+        "\t\t\t\tartistTitle.textContent = \"\";\n"
+        "\t\t\t\tartistTitle.appendChild(el(\"span\", \"doomnet-artist-name\", { text: artistName }));\n"
+        "\t\t\t\tvar artistEye = el(\"button\", \"doomnet-artist-eye\", { type: \"button\" });\n"
+        "\t\t\t\tfunction artistExtrasShown() {\n"
+        "\t\t\t\t\tif (UI._doomnetArtistExtrasShown == null) {\n"
+        "\t\t\t\t\t\tUI._doomnetArtistExtrasShown = true;\n"
+        "\t\t\t\t\t\ttry {\n"
+        "\t\t\t\t\t\t\tUI._doomnetArtistExtrasShown = window.localStorage.getItem(\"smp-artist-extras-shown\") !== \"0\";\n"
+        "\t\t\t\t\t\t} catch (e) {}\n"
+        "\t\t\t\t\t}\n"
+        "\t\t\t\t\treturn UI._doomnetArtistExtrasShown !== false;\n"
+        "\t\t\t\t}\n"
+        "\t\t\t\tfunction paintArtistEye(shown) {\n"
+        "\t\t\t\t\tartistEye.innerHTML = shown\n"
+        "\t\t\t\t\t\t? '<svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" aria-hidden=\"true\"><path fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" d=\"M2.5 12S6 6.5 12 6.5 21.5 12 21.5 12 18 17.5 12 17.5 2.5 12 2.5 12z\"/><circle fill=\"currentColor\" cx=\"12\" cy=\"12\" r=\"2.2\"/></svg>'\n"
+        "\t\t\t\t\t\t: '<svg viewBox=\"0 0 24 24\" width=\"18\" height=\"18\" aria-hidden=\"true\"><path fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" d=\"M3 14c2.6-4.2 5.6-6.2 9-6.2s6.4 2 9 6.2\"/><path fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" d=\"M7 16.2c1.5.9 3.1 1.4 5 1.4s3.5-.5 5-1.4\"/></svg>';\n"
+        "\t\t\t\t\tartistEye.setAttribute(\"aria-pressed\", shown ? \"true\" : \"false\");\n"
+        "\t\t\t\t\tartistEye.setAttribute(\"aria-label\", shown ? \"Hide the other album buttons\" : \"Show the other album buttons\");\n"
+        "\t\t\t\t\tartistEye.title = shown ? \"Hide the other album buttons\" : \"Show the other album buttons\";\n"
+        "\t\t\t\t}\n"
+        "\t\t\t\tfunction applyArtistExtras() {\n"
+        "\t\t\t\t\tvar shown = artistExtrasShown();\n"
+        "\t\t\t\t\tartistQueueActions.classList.toggle(\"doomnet-artist-extras-off\", !shown);\n"
+        "\t\t\t\t\tif (!shown) {\n"
+        "\t\t\t\t\t\torderMenu.hidden = true;\n"
+        "\t\t\t\t\t}\n"
+        "\t\t\t\t\tpaintArtistEye(shown);\n"
+        "\t\t\t\t}\n"
+        "\t\t\t\tartistEye.addEventListener(\"click\", function (event) {\n"
+        "\t\t\t\t\tevent.preventDefault();\n"
+        "\t\t\t\t\tevent.stopPropagation();\n"
+        "\t\t\t\t\tUI._doomnetArtistExtrasShown = !artistExtrasShown();\n"
+        "\t\t\t\t\ttry {\n"
+        "\t\t\t\t\t\twindow.localStorage.setItem(\"smp-artist-extras-shown\", UI._doomnetArtistExtrasShown ? \"1\" : \"0\");\n"
+        "\t\t\t\t\t} catch (e) {}\n"
+        "\t\t\t\t\tapplyArtistExtras();\n"
+        "\t\t\t\t});\n"
+        "\t\t\t\tartistTitle.appendChild(artistEye);\n"
+        "\t\t\t\tapplyArtistExtras();\n"
+        "\t\t\t}\n";
     const size_t artist_albums_at = ui.find(old_artist_albums);
     if (artist_albums_at != std::string::npos) {
         ui.replace(artist_albums_at, old_artist_albums.size(), new_artist_albums);
@@ -6038,6 +6087,11 @@ std::string patched_player_css_text() {
         "\n.smp-view-library .smp-drill-bar{position:relative;z-index:8;}"
         "\n.smp-drill-bar .smp-artist-queue-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:8px;margin-left:auto;flex:0 1 auto;overflow:visible;max-width:none;white-space:normal;}"
         "\n.smp-drill-bar .smp-artist-queue-actions .smp-btn{margin:0;flex:0 0 auto;}"
+        "\n.smp-drill-bar .smp-drill-title:has(.doomnet-artist-eye){display:flex;align-items:center;gap:6px;}"
+        "\n.doomnet-artist-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}"
+        "\n.doomnet-artist-eye{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;margin:0;padding:0;border:0;background:transparent;color:var(--smp-accent);cursor:pointer;flex:0 0 auto;}"
+        "\n.doomnet-artist-eye svg{display:block;}"
+        "\n.smp-artist-queue-actions.doomnet-artist-extras-off .doomnet-artist-extra{display:none;}"
         "\n.smp-drill-bar .smp-artist-order{position:relative;margin:0;flex:0 0 auto;}"
         "\n.smp-artist-order-btn{margin:0;height:28px;min-height:28px;padding:0 22px 0 10px;border-radius:3px;border:1px solid var(--smp-border);background:var(--smp-bg-panel);color:var(--smp-text);font:inherit;font-size:12px;cursor:pointer;position:relative;}"
         "\n.smp-artist-order-btn:after{content:\"\";position:absolute;right:8px;top:50%;margin-top:-2px;border-left:4px solid transparent;border-right:4px solid transparent;border-top:5px solid var(--smp-accent);}"
