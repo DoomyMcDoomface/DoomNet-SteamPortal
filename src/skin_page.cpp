@@ -886,10 +886,10 @@ std::string patched_player_bootstrap_text() {
         return {};
     }
     const std::string old_rev = "var ASSET_REV = \"20261027-version-1.15.0\"";
-    const std::string new_rev = "var ASSET_REV = \"20261123-version-1.25.7-artist-tip-tone\"";
+    const std::string new_rev = "var ASSET_REV = \"20261123-version-1.25.8-mini-menus\"";
     const size_t at = text.find(old_rev);
     if (at == std::string::npos) {
-        if (text.find("20261123-version-1.25.7-artist-tip-tone") == std::string::npos) {
+        if (text.find("20261123-version-1.25.8-mini-menus") == std::string::npos) {
             log_event(L"warn", L"inject", L"The player loader still uses version 1.15.0, so Steam can keep showing the old page.");
         }
     } else {
@@ -913,7 +913,7 @@ std::string patched_player_ui_text() {
     }
     ui.swap(normalized);
     const std::string old_plugin_version = "var PLUGIN_VERSION = \"1.15.0\"";
-    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.25.7\"";
+    const std::string new_plugin_version = "var PLUGIN_VERSION = \"1.25.8\"";
     for (size_t at = 0; (at = ui.find(old_plugin_version, at)) != std::string::npos; at += new_plugin_version.size()) {
         ui.replace(at, old_plugin_version.size(), new_plugin_version);
     }
@@ -3754,14 +3754,17 @@ std::string patched_player_ui_text() {
         "\t\t\t\t});\n"
         "\t\t\t\tUI.doomnetOpenPlaylistMenu(addDiscographyBtn, ids);\n"
         "\t\t\t});\n"
-        "\t\t\taddArtistQueueBtn.classList.add(\"doomnet-artist-extra\");\n"
-        "\t\t\tshuffleArtistQueueBtn.classList.add(\"doomnet-artist-extra\");\n"
-        "\t\t\taddDiscographyBtn.classList.add(\"doomnet-artist-extra\");\n"
-        "\t\t\tartistQueueActions.appendChild(playArtistBtn);\n"
-        "\t\t\tartistQueueActions.appendChild(shuffleArtistBtn);\n"
-        "\t\t\tartistQueueActions.appendChild(addArtistQueueBtn);\n"
-        "\t\t\tartistQueueActions.appendChild(shuffleArtistQueueBtn);\n"
-        "\t\t\tartistQueueActions.appendChild(addDiscographyBtn);\n"
+        "\t\t\tvar miniArtist = document.documentElement.classList.contains(\"smp-ctx-overlay\");\n"
+        "\t\t\tif (!miniArtist) {\n"
+        "\t\t\t\taddArtistQueueBtn.classList.add(\"doomnet-artist-extra\");\n"
+        "\t\t\t\tshuffleArtistQueueBtn.classList.add(\"doomnet-artist-extra\");\n"
+        "\t\t\t\taddDiscographyBtn.classList.add(\"doomnet-artist-extra\");\n"
+        "\t\t\t\tartistQueueActions.appendChild(playArtistBtn);\n"
+        "\t\t\t\tartistQueueActions.appendChild(shuffleArtistBtn);\n"
+        "\t\t\t\tartistQueueActions.appendChild(addArtistQueueBtn);\n"
+        "\t\t\t\tartistQueueActions.appendChild(shuffleArtistQueueBtn);\n"
+        "\t\t\t\tartistQueueActions.appendChild(addDiscographyBtn);\n"
+        "\t\t\t}\n"
         "\t\t\tvar orderWrap = el(\"div\", \"smp-artist-order\");\n"
         "\t\t\tvar orderButton = el(\"button\", \"smp-artist-order-btn\", { type: \"button\" });\n"
         "\t\t\torderButton.setAttribute(\"aria-label\", \"Album order\");\n"
@@ -3848,8 +3851,40 @@ std::string patched_player_ui_text() {
         "\t\t\t\tsaveArtistOrder();\n"
         "\t\t\t\tUI.renderLibrary();\n"
         "\t\t\t});\n"
-        "\t\t\torderWrap.classList.add(\"doomnet-artist-extra\");\n"
-        "\t\t\torderDirBtn.classList.add(\"doomnet-artist-extra\");\n"
+        "\t\t\tif (!miniArtist) {\n"
+        "\t\t\t\torderWrap.classList.add(\"doomnet-artist-extra\");\n"
+        "\t\t\t\torderDirBtn.classList.add(\"doomnet-artist-extra\");\n"
+        "\t\t\t}\n"
+        "\t\t\tif (miniArtist) {\n"
+        "\t\t\t\tvar playWrap = el(\"div\", \"smp-artist-order\");\n"
+        "\t\t\t\tvar playButton = el(\"button\", \"smp-artist-order-btn\", { type: \"button\", text: \"Play Options\" });\n"
+        "\t\t\t\tplayButton.setAttribute(\"aria-label\", \"Play Options\");\n"
+        "\t\t\t\tplayButton.title = \"Play, queue, or save this artist\";\n"
+        "\t\t\t\tvar playMenu = el(\"div\", \"smp-artist-order-menu\");\n"
+        "\t\t\t\tplayMenu.hidden = true;\n"
+        "\t\t\t\tvar playChoices = [playArtistBtn, shuffleArtistBtn, addArtistQueueBtn, shuffleArtistQueueBtn, addDiscographyBtn];\n"
+        "\t\t\t\tvar playIndex;\n"
+        "\t\t\t\tfor (playIndex = 0; playIndex < playChoices.length; playIndex++) {\n"
+        "\t\t\t\t\tplayChoices[playIndex].classList.remove(\"smp-btn\");\n"
+        "\t\t\t\t\tplayChoices[playIndex].classList.add(\"smp-artist-order-item\");\n"
+        "\t\t\t\t\tplayMenu.appendChild(playChoices[playIndex]);\n"
+        "\t\t\t\t}\n"
+        "\t\t\t\tplayMenu.addEventListener(\"click\", function () {\n"
+        "\t\t\t\t\tplayMenu.hidden = true;\n"
+        "\t\t\t\t}, true);\n"
+        "\t\t\t\tplayButton.addEventListener(\"click\", function (event) {\n"
+        "\t\t\t\t\tevent.preventDefault();\n"
+        "\t\t\t\t\tevent.stopPropagation();\n"
+        "\t\t\t\t\tvar opening = playMenu.hidden;\n"
+        "\t\t\t\t\tvar menus = document.querySelectorAll(\".smp-artist-order-menu\");\n"
+        "\t\t\t\t\tvar menuIndex;\n"
+        "\t\t\t\t\tfor (menuIndex = 0; menuIndex < menus.length; menuIndex++) menus[menuIndex].hidden = true;\n"
+        "\t\t\t\t\tplayMenu.hidden = !opening;\n"
+        "\t\t\t\t});\n"
+        "\t\t\t\tplayWrap.appendChild(playButton);\n"
+        "\t\t\t\tplayWrap.appendChild(playMenu);\n"
+        "\t\t\t\tartistQueueActions.appendChild(playWrap);\n"
+        "\t\t\t}\n"
         "\t\t\tartistQueueActions.appendChild(orderWrap);\n"
         "\t\t\tartistQueueActions.appendChild(orderDirBtn);\n"
         "\t\t\tUI.renderDrillBackBar(view, artist, UI.goBack, artistQueueActions);\n"
@@ -6088,6 +6123,7 @@ std::string patched_player_css_text() {
         "\n.smp-view-library .smp-drill-bar{position:relative;z-index:8;}"
         "\n.smp-drill-bar .smp-artist-queue-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:8px;margin-left:auto;flex:0 1 auto;overflow:visible;max-width:none;white-space:normal;}"
         "\n.smp-drill-bar .smp-artist-queue-actions .smp-btn{margin:0;flex:0 0 auto;}"
+        "\nhtml.smp-ctx-overlay .smp-drill-bar .smp-artist-queue-actions{flex-wrap:nowrap;}"
         "\n.smp-drill-bar .smp-drill-title:has(.doomnet-artist-eye){display:flex;align-items:center;gap:6px;}"
         "\n.doomnet-artist-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}"
         "\n.doomnet-artist-eye{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;margin:0;padding:0;border:0;background:transparent;color:var(--smp-accent);cursor:pointer;flex:0 0 auto;}"
